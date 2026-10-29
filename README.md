@@ -1,38 +1,42 @@
 # Stock Finder
 
 A Telegram bot for the NSE. Send it a list of stocks and options (best between 09:30 and 10:00 IST). For each one it
-replies with a verdict and the few factors driving it.
+replies with a verdict, the main reasons for it, and every parameter it was scored on (value, target, points).
 
 ```
-✅ TCS ₹4,118.40: LONG TERM + INTRADAY LONG
-  Long-term 78/100 · Intraday 72/100
-  + price above 200-day average
-  + ROE 46%
-  + low debt (D/E 0.08)
-  − 12-month momentum -4%
-  intraday + volume 2.1x normal
-  intraday + price above VWAP 4,108.20
-  Plan LONG: entry 4,118.40 · stop 4,086.10 · target 4,182.90
-
-❌ NIFTY 25000 CE 04 Nov @ ₹112.00: AVOID (40/100)
-  spot 24,870.15 · IV 14.2% · PCR 0.68 · max pain 24900
-  + 6 days to expiry
-  − premium expensive (IV 14% vs realised 8%)
-  − PCR 0.68: call writers capping upside
+✅ TCS ₹4,118.40: LONG TERM
+  Tata Consultancy Services Limited · Technology
+📈 Long-term 78/100 (need 65) ✅
+  Why: strengths: ROE 46%, Price vs 200-day avg ...; weaknesses: 12-month momentum -4%
+  ✓ Price vs 200-day avg: 4,118.4 vs 3,950.0 (+4.3%) (want above) +10/10
+  ✗ 12-month momentum: -4% (want >+10%) 0/10
+  ✓ ROE: 46% (want >15%) +10/10
+  ◐ P/E: 44.0 (want 0-40) +4/8
+  ... every parameter, with its value, target and points
+⚡ Intraday LONG 55/100 (need 65) —
+  ✓ Price vs VWAP: 4,118.40 vs 4,108.20 (want above) +25/25
+  ...
 ```
+
+Marks: ✓ full points · ◐ partial · ✗ none or penalty · – no data (not scored).
 
 ## What you can send
 
-Separate items with commas or new lines. Plain stocks can also be separated by spaces.
+Separate items with commas or new lines. Use any company name or NSE symbol; spelling mistakes are tolerated.
 
 | Input | Meaning |
 |---|---|
-| `RELIANCE, TCS INFY` | NSE stocks |
+| `Tata Steel, hdfc bank, RELIANCE` | stocks by name or symbol |
+| `TCS INFY WIPRO` | several exact symbols on one line |
 | `NIFTY 25000 CE` | option, nearest expiry |
-| `BANKNIFTY 52000PE 27NOV` | option, specific expiry |
+| `Bank Nifty 52000PE 27NOV` | option, specific expiry |
+| `HDFC Bank 1800 CE` | stock option by company name |
 
-Index options are supported for NIFTY, BANKNIFTY, FINNIFTY, MIDCPNIFTY and NIFTYNXT50. Stock options use the
-stock symbol.
+Names are matched against NSE's official equity list (`EQUITY_L.csv`, downloaded once a day and cached in
+`NSE_LIST_CACHE`). If that fails, the bot falls back to a Yahoo Finance search of NSE listings. If a name matches
+several companies (e.g. `TATA`), the bot lists the closest ones for you to pick from.
+
+Index options are supported for NIFTY, BANKNIFTY, FINNIFTY, MIDCPNIFTY and NIFTYNXT50.
 
 ## How verdicts are decided
 
@@ -94,7 +98,7 @@ Every recommendation is logged to SQLite (`STOCK_FINDER_DB`), so its accuracy ca
 5. Message the bot. It replies with your chat id. Add that id to `ALLOWED_CHAT_IDS` in `.env` and restart the bot.
 6. Optional terminal check, without Telegram:
    ```bash
-   .venv/bin/python -m stock_finder check RELIANCE, NIFTY 25000 CE
+   .venv/bin/python -m stock_finder check "Tata Steel, NIFTY 25000 CE"
    ```
 7. To run it permanently on a Linux server, use `deploy/stock-finder.service`.
 

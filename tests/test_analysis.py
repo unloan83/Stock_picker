@@ -20,6 +20,7 @@ from stock_finder.intraday import score_intraday
 from stock_finder.longterm import score_long_term
 from stock_finder.models import OptionRequest, StockRequest
 from stock_finder.options import max_pain, pcr
+from stock_finder.resolver import SymbolResolver
 from tests.fakes import FakeMarket, chain, daily_series, intraday_bars
 
 TODAY = date(2026, 10, 29)
@@ -53,23 +54,27 @@ def test_vwap_weights_by_volume():
 def test_uptrend_with_strong_fundamentals_scores_high():
     s = score_long_term(daily_series(drift=0.0015, vol=0.008, volume=5e6), STRONG)
     assert s.score >= 80
-    assert any("200-day" in d.text for d in s.top(True, 10))
+    assert any("200-day" in d.name for d in s.top(True, 10))
+    assert len(s.drivers) == 12 and all(d.want for d in s.drivers)
 
 
 def test_downtrend_with_weak_fundamentals_scores_low():
     s = score_long_term(daily_series(drift=-0.0015, vol=0.03, volume=1e4), WEAK)
     assert s.score < 30
-    assert any("negative P/E" in d.text for d in s.top(False, 10))
+    pe = next(d for d in s.drivers if d.name == "P/E")
+    assert (pe.value, pe.points, pe.max_points) == ("-5.0", 0, 8)
 
 
 def test_missing_fundamentals_are_not_penalised():
     data = daily_series(drift=0.0015, vol=0.008, volume=5e6)
-    assert score_long_term(data, Fundamentals()).score >= 80
+    s = score_long_term(data, Fundamentals())
+    assert s.score >= 80
+    assert sum(not d.scored for d in s.drivers) == 5
 
 
 def test_short_history_is_flagged():
     s = score_long_term(daily_series(days=100), STRONG)
-    assert s.score == 0 and "history" in s.drivers[0].text
+    assert s.score == 0 and "history" in s.drivers[0].name
 
 
 # --- intraday -----------------------------------------------------------------------------------------------------
@@ -136,6 +141,14 @@ def test_parse_nse_chain_filters_expiry():
 
 # --- engine + formatter -------------------------------------------------------------------------------------------
 
+RESOLVER = SymbolResolver(
+    None,
+    list_loader=lambda: {"GOODCO": "Good Company Limited", "BADCO": "Bad Company Limited",
+                         **{f"BADCO{i}": "Bad Company Limited" for i in range(60)}},
+    searcher=lambda q: [],
+)
+
+
 def _market():
     up = daily_series(drift=0.0015, vol=0.008, volume=5e6)
     down = daily_series(drift=-0.0015, vol=0.03, volume=1e4, seed=2)
@@ -143,9 +156,9 @@ def _market():
     bars = intraday_bars(TODAY, prev, list(prev * (1.008 + 0.001 * np.arange(8))), today_volume=40_000)
     nifty = daily_series(start=20000, drift=0.0008, vol=0.008, seed=3)
     return FakeMarket(
-        daily={"GOODCO": up, "BADCO": down, "NIFTY": nifty},
+        daily={"GOODCO": up, "BADCO": down, "NIFTY": nifty, **{f"BADCO{i}": down for i in range(60)}},
         intraday={"GOODCO": bars},
-        fundamentals={"GOODCO": STRONG, "BADCO": WEAK},
+        fundamentals={"GOODCO": STRONG, "BADCO": WEAK, **{f"BADCO{i}": WEAK for i in range(60)}},
         chains={"NIFTY": chain(spot=float(nifty["Close"].iloc[-1]), iv=13.0)},
     )
 
@@ -154,7 +167,7 @@ def test_engine_verdicts_end_to_end():
     md = _market()
     spot = md._chains["NIFTY"].spot
     near = round(spot / 100) * 100
-    reports = analyse_all(md, [
+    reports = analyse_all(md, RESOLVER, [
         StockRequest("GOODCO"), StockRequest("BADCO"), StockRequest("NOSUCH"),
         OptionRequest("NIFTY", near, "CE"), OptionRequest("NIFTY", near - 900, "PE"), OptionRequest("NIFTY", 1, "CE"),
     ], TODAY)
@@ -168,11 +181,14 @@ def test_engine_verdicts_end_to_end():
 
     text = "\n".join(format_reply(reports, ["???"], pd.Timestamp("2026-10-29 09:40")))
     assert "GOODCO" in text and "Plan LONG" in text and "Not understood: ???" in text
-    assert "  + " in text and "  − " in text
+    assert "Why: strengths:" in text and "weaknesses:" in text
+    assert "✓ ROE: 22% (want >15%) +10/10" in text
+    assert "Volume vs normal" in text and "IV vs realised vol" in text
+    assert "NOSUCH: NO DATA (not found on NSE" in text
 
 
 def test_reply_is_split_under_telegram_limit():
     md = _market()
-    reports = analyse_all(md, [StockRequest("BADCO")] * 60, TODAY)
+    reports = analyse_all(md, RESOLVER, [StockRequest(f"BADCO{i}") for i in range(60)], TODAY)
     msgs = format_reply(reports, [], pd.Timestamp("2026-10-29 09:40"))
     assert len(msgs) > 1 and all(len(m) <= 4096 for m in msgs)

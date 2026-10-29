@@ -1,19 +1,49 @@
-"""Plain-text Telegram replies: a verdict line plus the few drivers behind it."""
+"""Plain-text Telegram replies: verdict, the key drivers, then every analysis parameter with its value and target."""
 
 from datetime import datetime
 
-from .engine import INTRADAY, LONG_TERM, NO_DATA, NOT_RECOMMENDED, OPTION_BUY
-from .models import OptionReport, Score, StockReport
+from .engine import INTRADAY_MIN, LONG_TERM, LONG_TERM_MIN, NO_DATA, NOT_RECOMMENDED, OPTION_BUY, OPTION_MIN
+from .models import Driver, OptionReport, Score, StockReport
 
 MAX_MESSAGE = 4000
-DISCLAIMER = "Rule-based signals from free, possibly delayed data. Not investment advice."
+DISCLAIMER = (
+    "✓ full points · ◐ partial · ✗ none/penalty · – no data (not scored)\n"
+    "Rule-based signals from free, possibly delayed data. Not investment advice."
+)
 
 
-def _drivers(score: Score | None, pos: int, neg: int) -> list[str]:
-    if score is None:
-        return []
-    lines = [f"  + {d.text}" for d in score.top(True, pos)]
-    lines += [f"  − {d.text}" for d in score.top(False, neg)]
+def _mark(d: Driver) -> str:
+    if not d.scored:
+        return "–"
+    if d.points >= d.max_points:
+        return "✓"
+    return "◐" if d.points > 0 else "✗"
+
+
+def _param(d: Driver) -> str:
+    if not d.scored:
+        return f"  – {d.name}: no data"
+    pts = f"+{d.points:g}" if d.points > 0 else f"{d.points:g}"
+    return f"  {_mark(d)} {d.name}: {d.value} (want {d.want}) {pts}/{d.max_points:g}"
+
+
+def _why(score: Score) -> str:
+    good = [d.text for d in score.top(True, 2)]
+    bad = [d.text for d in score.top(False, 2)]
+    parts = []
+    if good:
+        parts.append("strengths: " + ", ".join(good))
+    if bad:
+        parts.append("weaknesses: " + ", ".join(bad))
+    return "  Why: " + "; ".join(parts) if parts else ""
+
+
+def _section(title: str, score: Score) -> list[str]:
+    lines = [title]
+    why = _why(score)
+    if why:
+        lines.append(why)
+    lines += [_param(d) for d in score.drivers]
     return lines
 
 
@@ -25,20 +55,19 @@ def format_stock(r: StockReport) -> str:
     if r.verdict == NO_DATA:
         return f"⚪ {r.symbol}: {NO_DATA} ({r.error})"
     icon = "❌" if r.verdict == NOT_RECOMMENDED else "✅"
-    lt = f"{r.long_term.score:.0f}" if r.long_term else "—"
-    it = f"{r.intraday.score:.0f}" if r.intraday else "—"
-    lines = [f"{icon} {r.symbol} {_price(r.price)}: {r.verdict}", f"  Long-term {lt}/100 · Intraday {it}/100"]
-
-    if LONG_TERM in r.verdict:
-        lines += _drivers(r.long_term, 3, 1)
-    if INTRADAY in r.verdict and r.intraday_plan:
+    lines = [f"{icon} {r.symbol} {_price(r.price)}: {r.verdict}"]
+    if r.name and r.name != r.symbol:
+        lines.append(f"  {r.name}")
+    if r.long_term:
+        mark = "✅" if LONG_TERM in r.verdict else "—"
+        lines += _section(f"📈 Long-term {r.long_term.score:.0f}/100 (need {LONG_TERM_MIN}) {mark}", r.long_term)
+    if r.intraday and r.intraday_plan:
         p = r.intraday_plan
-        lines += [line.replace("  ", "  intraday ", 1) for line in _drivers(r.intraday, 3, 1)]
-        lines.append(f"  Plan {p.direction}: entry {p.entry:,.2f} · stop {p.stop:,.2f} · target {p.target:,.2f}")
-    if r.verdict == NOT_RECOMMENDED:
-        lines += _drivers(r.long_term, 1, 2)
-        if r.intraday:
-            lines += [f"  intraday − {d.text}" for d in r.intraday.top(False, 1)]
+        ok = r.intraday.score >= INTRADAY_MIN
+        lines += _section(f"⚡ Intraday {p.direction} {r.intraday.score:.0f}/100 (need {INTRADAY_MIN}) "
+                          f"{'✅' if ok else '—'}", r.intraday)
+        if ok:
+            lines.append(f"  Plan {p.direction}: entry {p.entry:,.2f} · stop {p.stop:,.2f} · target {p.target:,.2f}")
     lines += [f"  ⚠ {f}" for f in r.flags]
     return "\n".join(lines)
 
@@ -48,14 +77,14 @@ def format_option(r: OptionReport) -> str:
         return f"⚪ {r.label}: {NO_DATA} ({r.error})"
     icon = "✅" if r.verdict == OPTION_BUY else "❌"
     exp = f"{r.expiry:%d %b}" if r.expiry else "—"
-    lines = [f"{icon} {r.label} {exp} @ {_price(r.ltp)}: {r.verdict} ({r.score.score:.0f}/100)" if r.score
-             else f"{icon} {r.label}: {r.verdict}"]
+    lines = [f"{icon} {r.label} {exp} @ {_price(r.ltp)}: {r.verdict}"]
     facts = [f"spot {r.spot:,.2f}" if r.spot else None,
              f"IV {r.iv:.1f}%" if r.iv else None,
              f"PCR {r.pcr:.2f}" if r.pcr is not None else None,
              f"max pain {r.max_pain:g}" if r.max_pain is not None else None]
     lines.append("  " + " · ".join(f for f in facts if f))
-    lines += _drivers(r.score, 3, 2)
+    if r.score:
+        lines += _section(f"🎯 Option buy {r.score.score:.0f}/100 (need {OPTION_MIN})", r.score)
     lines += [f"  ⚠ {f}" for f in r.flags]
     return "\n".join(lines)
 
@@ -78,4 +107,3 @@ def format_reply(reports: list[StockReport | OptionReport], unknown: list[str], 
     if current:
         messages.append(current)
     return messages
-

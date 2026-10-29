@@ -4,14 +4,25 @@ from datetime import date
 
 @dataclass(frozen=True)
 class Driver:
-    """One reason behind a verdict. Positive drivers support it, negative ones count against it."""
+    """One scored parameter: its measured value, the level it is judged against, and the points it earned."""
 
-    text: str
-    points: float  # contribution; negative for drags
+    name: str
+    value: str  # measured value, e.g. "18%"
+    want: str  # the level that earns full points, e.g. ">15%"
+    points: float  # earned; negative for a penalty
+    max_points: float  # 0 when the parameter could not be scored (data missing)
+
+    @property
+    def scored(self) -> bool:
+        return self.max_points > 0
 
     @property
     def positive(self) -> bool:
         return self.points > 0
+
+    @property
+    def text(self) -> str:
+        return f"{self.name} {self.value}"
 
 
 @dataclass
@@ -20,8 +31,11 @@ class Score:
     drivers: list[Driver] = field(default_factory=list)
 
     def top(self, positive: bool, n: int) -> list[Driver]:
-        picked = [d for d in self.drivers if d.positive == positive and d.points != 0]
-        return sorted(picked, key=lambda d: abs(d.points), reverse=True)[:n]
+        """Biggest contributors (positive) or biggest shortfalls (not positive)."""
+        picked = [d for d in self.drivers if d.scored and d.positive == positive]
+        if positive:
+            return sorted(picked, key=lambda d: d.points, reverse=True)[:n]
+        return sorted(picked, key=lambda d: d.points - d.max_points)[:n]
 
 
 @dataclass
@@ -34,12 +48,12 @@ class IntradayPlan:
 
 @dataclass
 class StockRequest:
-    symbol: str
+    query: str  # what the user typed: a symbol or a company name
 
 
 @dataclass
 class OptionRequest:
-    underlying: str
+    underlying: str  # symbol or company name
     strike: float
     kind: str  # "CE" or "PE"
     expiry_day: int | None = None
@@ -51,6 +65,7 @@ class StockReport:
     symbol: str
     price: float | None
     verdict: str
+    name: str | None = None
     long_term: Score | None = None
     intraday: Score | None = None
     intraday_plan: IntradayPlan | None = None

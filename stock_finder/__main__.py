@@ -1,7 +1,7 @@
 """Entry point.
 
     python -m stock_finder bot                         # run the Telegram bot
-    python -m stock_finder check RELIANCE, NIFTY 25000 CE   # one-off analysis in the terminal
+    python -m stock_finder check "Tata Steel, NIFTY 25000 CE"   # one-off analysis in the terminal
 """
 
 import sys
@@ -22,10 +22,12 @@ def main() -> None:
     from .engine import analyse_all, now_ist
     from .formatter import format_reply
     from .parser import parse_message
+    from .resolver import SymbolResolver
 
     requests, unknown = parse_message(" ".join(args[1:]))
     at = now_ist()
-    for text in format_reply(analyse_all(FreeMarketData(), requests, at.date()), unknown, at):
+    reports = analyse_all(FreeMarketData(), SymbolResolver("nse_equity_list.csv"), requests, at.date())
+    for text in format_reply(reports, unknown, at):
         print(text)
 
 

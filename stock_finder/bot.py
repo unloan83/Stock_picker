@@ -11,17 +11,20 @@ from .data import FreeMarketData
 from .engine import analyse_all, now_ist
 from .formatter import format_reply
 from .parser import parse_message
+from .resolver import SymbolResolver
 from .store import RecommendationLog
 
 log = logging.getLogger(__name__)
 
 HELP = (
-    "Send NSE stocks and options, separated by commas or new lines:\n"
-    "  RELIANCE, TCS, INFY\n"
+    "Send NSE stocks (symbol or company name) and options, separated by commas or new lines:\n"
+    "  RELIANCE, Tata Steel, hdfc bank\n"
+    "  TCS INFY WIPRO   (exact symbols may share a line)\n"
     "  NIFTY 25000 CE\n"
     "  BANKNIFTY 52000 PE 27NOV   (expiry optional; nearest by default)\n\n"
-    "Each stock gets LONG TERM / INTRADAY LONG|SHORT / NOT RECOMMENDED with its drivers.\n"
+    "Each stock gets LONG TERM / INTRADAY LONG|SHORT / NOT RECOMMENDED.\n"
     "Each option gets BUY / AVOID for an option buyer.\n"
+    "Every reply lists each parameter: its value, the target and the points earned.\n"
     "Intraday signals need market data after 09:15 IST; best used 09:30-10:00."
 )
 MAX_ITEMS = 25
@@ -68,7 +71,8 @@ async def analyse_msg(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 
     await message.reply_text(f"Analysing {len(requests)} item(s)…")
     at = now_ist()
-    reports = await asyncio.to_thread(analyse_all, context.bot_data["md"], requests, at.date())
+    reports = await asyncio.to_thread(analyse_all, context.bot_data["md"], context.bot_data["resolver"],
+                                    requests, at.date())
     try:
         context.bot_data["log"].record(at, message.chat_id, reports)
     except Exception:
@@ -81,6 +85,7 @@ def build_app(token: str) -> Application:
     app = Application.builder().token(token).build()
     app.bot_data["allowed"] = allowed_chat_ids()
     app.bot_data["md"] = FreeMarketData()
+    app.bot_data["resolver"] = SymbolResolver(os.environ.get("NSE_LIST_CACHE", "nse_equity_list.csv"))
     app.bot_data["log"] = RecommendationLog(os.environ.get("STOCK_FINDER_DB", "stock_finder.db"))
     app.add_handler(CommandHandler(["start", "help"], help_cmd))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, analyse_msg))

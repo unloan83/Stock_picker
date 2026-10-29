@@ -42,70 +42,54 @@ def find_row(chain: OptionChain, strike: float) -> OptionRow | None:
 def score_option(chain: OptionChain, row: OptionRow, kind: str, daily: pd.DataFrame, today: date) -> Score:
     up = kind == "CE"
     drivers: list[Driver] = []
-    pts = 0.0
 
-    def add(p: float, text: str) -> None:
-        nonlocal pts
-        pts += p
-        drivers.append(Driver(text, p))
+    def add(name: str, value: str, want: str, max_pts: float, pts: float) -> None:
+        drivers.append(Driver(name, value, want, pts, max_pts))
 
     close = daily["Close"]
+    want_trend = "price > 20d > 50d" if up else "price < 20d < 50d"
     if len(close) >= 50:
         last = float(close.iloc[-1])
         s20 = float(ind.sma(close, 20).iloc[-1])
         s50 = float(ind.sma(close, 50).iloc[-1])
         aligned = (last > s20 > s50) if up else (last < s20 < s50)
         partly = (last > s20) if up else (last < s20)
-        if aligned:
-            add(30, f"underlying trend {'up' if up else 'down'} (20 & 50-day avgs)")
-        elif partly:
-            add(15, f"underlying short-term {'up' if up else 'down'}")
-        else:
-            add(-15, f"underlying trend against a {kind} buy")
+        add("Underlying trend", f"{last:,.0f} / 20d {s20:,.0f} / 50d {s50:,.0f}", want_trend, 30,
+            30 if aligned else 15 if partly else -15)
+    else:
+        add("Underlying trend", "n/a", want_trend, 0, 0)
 
     iv = row.ce_iv if up else row.pe_iv
     hv = realised_vol(daily)
     if iv and not math.isnan(hv) and hv > 0:
         ratio = (iv / 100) / hv
-        if ratio <= 1.1:
-            add(20, f"premium fairly priced (IV {iv:.0f}% vs realised {hv * 100:.0f}%)")
-        elif ratio <= 1.4:
-            add(10, f"premium slightly rich (IV {iv:.0f}% vs realised {hv * 100:.0f}%)")
-        elif ratio > 1.6:
-            add(-15, f"premium expensive (IV {iv:.0f}% vs realised {hv * 100:.0f}%)")
+        pts = 20 if ratio <= 1.1 else 10 if ratio <= 1.4 else -15 if ratio > 1.6 else 0
+        add("IV vs realised vol (20d)", f"{iv:.1f}% vs {hv * 100:.1f}% ({ratio:.2f}x)", "≤1.1x", 20, pts)
+    else:
+        add("IV vs realised vol (20d)", "n/a", "≤1.1x", 0, 0)
 
     dte = (chain.expiry - today).days
-    if dte >= 5:
-        add(15, f"{dte} days to expiry")
-    elif dte >= 3:
-        add(8, f"{dte} days to expiry")
-    else:
-        add(-15, f"only {dte} day(s) to expiry: fast time decay")
+    add("Days to expiry", str(dte), "≥5", 15, 15 if dte >= 5 else 8 if dte >= 3 else -15)
 
     if chain.spot:
         otm = (row.strike - chain.spot) / chain.spot if up else (chain.spot - row.strike) / chain.spot
-        if otm <= 0.02:
-            add(15, "strike near the money" if otm > -0.02 else "strike in the money")
-        elif otm <= 0.04:
-            add(7, f"strike {otm * 100:.1f}% out of the money")
-        elif otm > 0.06:
-            add(-15, f"strike {otm * 100:.1f}% out of the money: low odds")
+        pts = 15 if otm <= 0.02 else 7 if otm <= 0.04 else -15 if otm > 0.06 else 0
+        where = "OTM" if otm > 0 else "ITM"
+        add("Strike vs spot", f"{abs(otm) * 100:.1f}% {where} (spot {chain.spot:,.0f})", "≤2% OTM", 15, pts)
+    else:
+        add("Strike vs spot", "n/a", "≤2% OTM", 0, 0)
 
     volume = row.ce_volume if up else row.pe_volume
-    if volume >= 1000:
-        add(10, "liquid contract")
-    elif volume < 100:
-        add(-10, "illiquid contract (wide spreads)")
+    add("Contracts traded today", f"{volume:,.0f}", "≥1,000", 10, 10 if volume >= 1000 else -10 if volume < 100 else 0)
 
     ratio_pcr = pcr(chain)
-    if ratio_pcr is not None:
-        if up and ratio_pcr >= 1.0:
-            add(10, f"PCR {ratio_pcr:.2f}: put writers supporting")
-        elif not up and ratio_pcr <= 0.8:
-            add(10, f"PCR {ratio_pcr:.2f}: call writers capping")
-        elif up and ratio_pcr < 0.7:
-            add(-5, f"PCR {ratio_pcr:.2f}: call writers capping upside")
-        elif not up and ratio_pcr > 1.3:
-            add(-5, f"PCR {ratio_pcr:.2f}: put writers supporting")
+    if ratio_pcr is None:
+        add("Put-call ratio (OI)", "n/a", "≥1.0" if up else "≤0.8", 0, 0)
+    elif up:
+        add("Put-call ratio (OI)", f"{ratio_pcr:.2f}", "≥1.0", 10,
+            10 if ratio_pcr >= 1.0 else -5 if ratio_pcr < 0.7 else 0)
+    else:
+        add("Put-call ratio (OI)", f"{ratio_pcr:.2f}", "≤0.8", 10,
+            10 if ratio_pcr <= 0.8 else -5 if ratio_pcr > 1.3 else 0)
 
-    return Score(round(max(0.0, min(100.0, pts)), 1), drivers)
+    return Score(round(max(0.0, min(100.0, sum(d.points for d in drivers))), 1), drivers)

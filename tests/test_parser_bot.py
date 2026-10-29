@@ -6,22 +6,15 @@ from stock_finder.parser import parse_message
 from stock_finder.store import RecommendationLog
 
 
-def test_parses_stocks_and_options():
-    reqs, unknown = parse_message("reliance, TCS infy\nNIFTY 25000 CE\nbanknifty 52000pe 27NOV; M&M.NS")
+def test_parses_names_symbols_and_options():
+    reqs, unknown = parse_message(
+        "reliance, TCS infy\nNIFTY 25000 CE\nbanknifty 52000pe 27NOV; M&M.NS\nTata Steel\nHDFC Bank 1800 CE 25-Nov")
     assert reqs == [
-        StockRequest("RELIANCE"), StockRequest("TCS"), StockRequest("INFY"),
+        StockRequest("RELIANCE"), StockRequest("TCS INFY"),
         OptionRequest("NIFTY", 25000.0, "CE"),
         OptionRequest("BANKNIFTY", 52000.0, "PE", 27, 11),
-        StockRequest("M&M"),
-    ]
-    assert unknown == []
-
-
-def test_company_names_map_to_symbols():
-    reqs, unknown = parse_message("HDFC BANK, hdfc life, State Bank of India, HDFC\nBank Nifty 52000 PE")
-    assert reqs == [
-        StockRequest("HDFCBANK"), StockRequest("HDFCLIFE"), StockRequest("SBIN"),
-        OptionRequest("BANKNIFTY", 52000.0, "PE"),
+        StockRequest("M&M"), StockRequest("TATA STEEL"),
+        OptionRequest("HDFC BANK", 1800.0, "CE", 25, 11),
     ]
     assert unknown == []
 

@@ -67,47 +67,36 @@ def score_intraday(bars: pd.DataFrame, daily: pd.DataFrame, today: date) -> Intr
         up = direction == "LONG"
         sign = 1 if up else -1
         drivers: list[Driver] = []
-        pts = 0.0
 
-        def add(p: float, text: str) -> None:
-            nonlocal pts
-            pts += p
-            drivers.append(Driver(text, p))
+        def add(name: str, value: str, want: str, max_pts: float, pts: float) -> None:
+            drivers.append(Driver(name, value, want, pts, max_pts))
 
-        if (price - vwap_now) * sign > 0:
-            add(25, f"price {'above' if up else 'below'} VWAP {vwap_now:.2f}")
+        above = (price - vwap_now) * sign > 0
+        add("Price vs VWAP", f"{price:,.2f} vs {vwap_now:,.2f}", "above" if up else "below", 25,
+            25 if above else -10)
+        if rel_vol is None:
+            add("Volume vs normal", "n/a", "≥1.5x", 0, 0)
         else:
-            add(-10, f"price on wrong side of VWAP {vwap_now:.2f}")
-        if rel_vol is not None:
-            if rel_vol >= 1.5:
-                add(25, f"volume {rel_vol:.1f}x normal")
-            elif rel_vol >= 1.2:
-                add(12, f"volume {rel_vol:.1f}x normal")
-            elif rel_vol < 0.8:
-                add(-10, f"thin volume ({rel_vol:.1f}x normal)")
+            pts = 25 if rel_vol >= 1.5 else 12 if rel_vol >= 1.2 else -10 if rel_vol < 0.8 else 0
+            add("Volume vs normal", f"{rel_vol:.1f}x", "≥1.5x", 25, pts)
         if up:
-            if 50 <= rsi_now <= 70:
-                add(15, f"RSI {rsi_now:.0f} (healthy strength)")
-            elif rsi_now > 75:
-                add(-10, f"RSI {rsi_now:.0f} overbought")
+            pts = 15 if 50 <= rsi_now <= 70 else -10 if rsi_now > 75 else 0
+            add("RSI (5-min)", f"{rsi_now:.0f}", "50-70", 15, pts)
         else:
-            if 30 <= rsi_now <= 50:
-                add(15, f"RSI {rsi_now:.0f} (weakening)")
-            elif rsi_now < 25:
-                add(-10, f"RSI {rsi_now:.0f} oversold")
-        if (prev_daily_close - sma20) * sign > 0:
-            add(15, f"daily trend {'up' if up else 'down'} (vs 20-day avg)")
+            pts = 15 if 30 <= rsi_now <= 50 else -10 if rsi_now < 25 else 0
+            add("RSI (5-min)", f"{rsi_now:.0f}", "30-50", 15, pts)
+        trend_ok = (prev_daily_close - sma20) * sign > 0
+        add("Daily close vs 20-day avg", f"{prev_daily_close:,.2f} vs {sma20:,.2f}", "above" if up else "below",
+            15, 15 if trend_ok else 0)
         g = gap * sign
-        if 0.003 <= g <= 0.03:
-            add(10, f"gap {gap * 100:+.1f}% in trade direction")
-        elif g > 0.04:
-            add(-10, f"gap {gap * 100:+.1f}% too large (fade risk)")
-        elif g < -0.01:
-            add(-5, f"gap {gap * 100:+.1f}% against trade")
+        pts = 10 if 0.003 <= g <= 0.03 else -10 if g > 0.04 else -5 if g < -0.01 else 0
+        add("Opening gap", f"{gap * 100:+.1f}%", "+0.3% to +3%" if up else "-0.3% to -3%", 10, pts)
         edge = (day_high - price) if up else (price - day_low)
-        if atr_d > 0 and edge <= 0.25 * atr_d:
-            add(10, f"trading near day {'high' if up else 'low'}")
-        return Score(round(max(0.0, min(100.0, pts)), 1), drivers)
+        near = atr_d > 0 and edge <= 0.25 * atr_d
+        add(f"Distance from day {'high' if up else 'low'}", f"{edge:,.2f} (ATR {atr_d:,.2f})", "≤0.25 ATR", 10,
+            10 if near else 0)
+        pts_total = sum(d.points for d in drivers)
+        return Score(round(max(0.0, min(100.0, pts_total)), 1), drivers)
 
     long_s, short_s = side("LONG"), side("SHORT")
     direction, best = ("LONG", long_s) if long_s.score >= short_s.score else ("SHORT", short_s)
