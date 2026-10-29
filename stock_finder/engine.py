@@ -36,9 +36,9 @@ def analyse_stock(md: MarketData, req: StockRequest, today: date) -> StockReport
         daily = md.daily(req.symbol)
     except Exception as exc:
         log.warning("daily data failed for %s: %s", req.symbol, exc)
-        return StockReport(req.symbol, None, NO_DATA, error="price data unavailable")
+        return StockReport(req.symbol, None, NO_DATA, error="no price data: check the NSE symbol, e.g. HDFCBANK")
     if daily.empty:
-        return StockReport(req.symbol, None, NO_DATA, error="unknown NSE symbol or no price data")
+        return StockReport(req.symbol, None, NO_DATA, error="unknown NSE symbol, e.g. use HDFCBANK")
 
     try:
         fund = md.fundamentals(req.symbol)

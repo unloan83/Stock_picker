@@ -17,6 +17,15 @@ def test_parses_stocks_and_options():
     assert unknown == []
 
 
+def test_company_names_map_to_symbols():
+    reqs, unknown = parse_message("HDFC BANK, hdfc life, State Bank of India, HDFC\nBank Nifty 52000 PE")
+    assert reqs == [
+        StockRequest("HDFCBANK"), StockRequest("HDFCLIFE"), StockRequest("SBIN"),
+        OptionRequest("BANKNIFTY", 52000.0, "PE"),
+    ]
+    assert unknown == []
+
+
 def test_dedupes_and_reports_unknown():
     reqs, unknown = parse_message("TCS, tcs, 12345, hello!, NIFTY 25000 CE 27XYZ")
     assert reqs == [StockRequest("TCS")]
