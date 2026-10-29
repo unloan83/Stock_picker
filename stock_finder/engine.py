@@ -116,6 +116,9 @@ def analyse_option(md: MarketData, req: OptionRequest, underlying: str, today: d
     return OptionReport(
         label=label,
         verdict=OPTION_BUY if score.score >= OPTION_MIN else OPTION_AVOID,
+        underlying=underlying,
+        strike=req.strike,
+        kind=req.kind,
         score=score,
         expiry=chain.expiry,
         ltp=ltp,

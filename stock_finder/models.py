@@ -77,6 +77,9 @@ class StockReport:
 class OptionReport:
     label: str
     verdict: str
+    underlying: str | None = None
+    strike: float | None = None
+    kind: str | None = None  # "CE" or "PE"
     score: Score | None = None
     expiry: date | None = None
     ltp: float | None = None

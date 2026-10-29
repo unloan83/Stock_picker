@@ -107,3 +107,16 @@ def format_reply(reports: list[StockReport | OptionReport], unknown: list[str], 
     if current:
         messages.append(current)
     return messages
+
+
+def split_text(text: str) -> list[str]:
+    """Split a long text on line boundaries into Telegram-sized messages."""
+    messages, current = [], ""
+    for line in text.split("\n"):
+        if current and len(current) + len(line) + 1 > MAX_MESSAGE:
+            messages.append(current)
+            current = ""
+        current = f"{current}\n{line}" if current else line
+    if current:
+        messages.append(current)
+    return messages

@@ -73,6 +73,29 @@ Flags warn about results due within 7 days and about missing or early-session in
 
 Every recommendation is logged to SQLite (`STOCK_FINDER_DB`), so its accuracy can be measured later.
 
+## Daily record and weekly report
+
+Every request is saved to SQLite (`STOCK_FINDER_DB`): the time, the item, the verdict, the price, and the intraday
+plan or option premium. If an item is sent more than once in a day, only the first (morning) call is judged.
+
+- `/today` lists what has been recorded today.
+- `/report` gives this week's hit/fail report. It is also sent automatically every **Saturday at 10:00 IST**, covering
+  Monday to Saturday.
+
+How each call is judged:
+
+| Verdict | ✅ Hit | ❌ Fail |
+|---|---|---|
+| INTRADAY LONG/SHORT | target reached before the stop that day (or closed in profit) | stop first (or closed at a loss) |
+| LONG TERM | beat NIFTY from that day's open to the latest close | lagged NIFTY |
+| NOT RECOMMENDED | did not beat NIFTY (avoiding it was right) | beat NIFTY |
+| Option BUY | premium now higher (intrinsic value if expired) | premium fell |
+| Option AVOID | premium fell | premium rose |
+
+Only 5-minute bars that start after the call count. A bar that touches both stop and target counts as the stop.
+One week is an early read for long-term calls. ⏳ marks calls that can't be judged yet, for example while the
+market is still open.
+
 ## Data (free)
 
 - Prices, intraday bars and fundamentals come from Yahoo Finance via `yfinance`. NSE quotes there can be delayed.

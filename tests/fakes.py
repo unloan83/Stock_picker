@@ -65,7 +65,7 @@ class FakeMarket:
             return pd.DataFrame(columns=["Open", "High", "Low", "Close", "Volume"])
         return self._daily[symbol]
 
-    def intraday(self, symbol: str) -> pd.DataFrame:
+    def intraday(self, symbol: str, period: str = "5d") -> pd.DataFrame:
         return self._intraday.get(symbol, pd.DataFrame(columns=["Open", "High", "Low", "Close", "Volume"]))
 
     def fundamentals(self, symbol: str) -> Fundamentals:

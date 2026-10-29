@@ -68,7 +68,7 @@ class OptionChain:
 
 class MarketData(Protocol):
     def daily(self, symbol: str) -> pd.DataFrame: ...
-    def intraday(self, symbol: str) -> pd.DataFrame: ...
+    def intraday(self, symbol: str, period: str = "5d") -> pd.DataFrame: ...
     def fundamentals(self, symbol: str) -> Fundamentals: ...
     def option_chain(self, symbol: str, expiry: date | None) -> OptionChain: ...
 
@@ -107,17 +107,18 @@ class FreeMarketData:
 
         return self._cached(("daily", symbol), load)
 
-    def intraday(self, symbol: str) -> pd.DataFrame:
+    def intraday(self, symbol: str, period: str = "5d") -> pd.DataFrame:
+        """5-minute bars in IST. Yahoo keeps about 60 days of them."""
         import yfinance as yf
 
         def load() -> pd.DataFrame:
-            df = yf.Ticker(yahoo_ticker(symbol)).history(period="5d", interval="5m", auto_adjust=False)
+            df = yf.Ticker(yahoo_ticker(symbol)).history(period=period, interval="5m", auto_adjust=False)
             df = df[["Open", "High", "Low", "Close", "Volume"]].dropna(subset=["Close"])
             if df.index.tz is not None:
                 df.index = df.index.tz_convert("Asia/Kolkata")
             return df
 
-        return self._cached(("intraday", symbol), load)
+        return self._cached((f"intraday-{period}", symbol), load)
 
     def fundamentals(self, symbol: str) -> Fundamentals:
         import yfinance as yf

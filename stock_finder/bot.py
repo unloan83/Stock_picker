@@ -3,14 +3,16 @@
 import asyncio
 import logging
 import os
+from datetime import datetime, time, timedelta
 
 from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, filters
 
 from .data import FreeMarketData
-from .engine import analyse_all, now_ist
-from .formatter import format_reply
+from .engine import IST, analyse_all, now_ist
+from .formatter import format_reply, split_text
 from .parser import parse_message
+from .performance import todays_list, weekly_report
 from .resolver import SymbolResolver
 from .store import RecommendationLog
 
@@ -25,9 +27,14 @@ HELP = (
     "Each stock gets LONG TERM / INTRADAY LONG|SHORT / NOT RECOMMENDED.\n"
     "Each option gets BUY / AVOID for an option buyer.\n"
     "Every reply lists each parameter: its value, the target and the points earned.\n"
-    "Intraday signals need market data after 09:15 IST; best used 09:30-10:00."
+    "Intraday signals need market data after 09:15 IST; best used 09:30-10:00.\n\n"
+    "Every request is recorded. Commands:\n"
+    "  /today   what was recorded today\n"
+    "  /report  this week's hit/fail report (sent automatically every Saturday 10:00 IST)"
 )
 MAX_ITEMS = 25
+REPORT_WEEKDAY = 5  # Saturday (Monday = 0)
+REPORT_TIME = time(10, 0)
 
 
 def allowed_chat_ids() -> set[int]:
@@ -56,6 +63,53 @@ async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await update.effective_message.reply_text(HELP)  # type: ignore[union-attr]
 
 
+async def _reply_long(update: Update, text: str) -> None:
+    for part in split_text(text):
+        await update.effective_message.reply_text(part)  # type: ignore[union-attr]
+
+
+async def report_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not await _guard(update, context):
+        return
+    await update.effective_message.reply_text("Checking this week's recommendations…")  # type: ignore[union-attr]
+    text = await asyncio.to_thread(weekly_report, context.bot_data["log"], context.bot_data["md"], now_ist(),
+                                   update.effective_chat.id)  # type: ignore[union-attr]
+    await _reply_long(update, text)
+
+
+async def today_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not await _guard(update, context):
+        return
+    text = todays_list(context.bot_data["log"], now_ist(), update.effective_chat.id)  # type: ignore[union-attr]
+    await _reply_long(update, text)
+
+
+def next_report_time(now: datetime) -> datetime:
+    """Next Saturday 10:00 IST strictly after `now`."""
+    days = (REPORT_WEEKDAY - now.weekday()) % 7
+    candidate = datetime.combine(now.date() + timedelta(days=days), REPORT_TIME, tzinfo=IST)
+    return candidate if candidate > now else candidate + timedelta(days=7)
+
+
+async def weekly_report_loop(app: Application) -> None:
+    while True:
+        when = next_report_time(now_ist())
+        log.info("next weekly report at %s", when.isoformat())
+        await asyncio.sleep(max(1.0, (when - now_ist()).total_seconds()))
+        for chat_id in app.bot_data["allowed"]:
+            try:
+                text = await asyncio.to_thread(weekly_report, app.bot_data["log"], app.bot_data["md"], now_ist(),
+                                               chat_id)
+                for part in split_text(text):
+                    await app.bot.send_message(chat_id, part)
+            except Exception:
+                log.exception("weekly report failed for chat %s", chat_id)
+
+
+async def _post_init(app: Application) -> None:
+    app.create_task(weekly_report_loop(app))
+
+
 async def analyse_msg(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not await _guard(update, context):
         return
@@ -82,12 +136,14 @@ async def analyse_msg(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 
 
 def build_app(token: str) -> Application:
-    app = Application.builder().token(token).build()
+    app = Application.builder().token(token).post_init(_post_init).build()
     app.bot_data["allowed"] = allowed_chat_ids()
     app.bot_data["md"] = FreeMarketData()
     app.bot_data["resolver"] = SymbolResolver(os.environ.get("NSE_LIST_CACHE", "nse_equity_list.csv"))
     app.bot_data["log"] = RecommendationLog(os.environ.get("STOCK_FINDER_DB", "stock_finder.db"))
     app.add_handler(CommandHandler(["start", "help"], help_cmd))
+    app.add_handler(CommandHandler("report", report_cmd))
+    app.add_handler(CommandHandler("today", today_cmd))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, analyse_msg))
     return app
 
