@@ -1,0 +1,18 @@
+# systemd unit: copy to /etc/systemd/system/stock-finder.service, adjust User and paths, then
+#   sudo systemctl daemon-reload && sudo systemctl enable --now stock-finder
+[Unit]
+Description=Stock Finder Telegram bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=stockfinder
+WorkingDirectory=/opt/stock_picker
+EnvironmentFile=/opt/stock_picker/.env
+ExecStart=/opt/stock_picker/.venv/bin/python -m stock_finder bot
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
