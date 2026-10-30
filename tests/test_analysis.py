@@ -180,8 +180,8 @@ def test_engine_verdicts_end_to_end():
     assert nostrike.verdict == NO_DATA and "nearest" in (nostrike.error or "")
 
     text = "\n".join(format_reply(reports, ["???"], pd.Timestamp("2026-10-29 09:40")))
-    assert "GOODCO" in text and "Plan LONG" in text and "Not understood: ???" in text
-    assert "Why: strengths:" in text and "weaknesses:" in text
+    assert "Good Company (GOODCO)" in text and "Plan LONG" in text and "Not understood: ???" in text
+    assert "Price vs 200-day avg" in text and "50-day vs 200-day avg" in text
     assert "✓ ROE: 22% (want >15%) +10/10" in text
     assert "Volume vs normal" in text and "IV vs realised vol" in text
     assert "NOSUCH: NO DATA (not found on NSE" in text

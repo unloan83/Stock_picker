@@ -19,6 +19,12 @@ def test_parses_names_symbols_and_options():
     assert unknown == []
 
 
+def test_strips_parenthetical_horizon_notes():
+    reqs, unknown = parse_message("APL apollo ( short term), nykaa (long term)")
+    assert reqs == [StockRequest("APL APOLLO"), StockRequest("NYKAA")]
+    assert unknown == []
+
+
 def test_dedupes_and_reports_unknown():
     reqs, unknown = parse_message("TCS, tcs, 12345, hello!, NIFTY 25000 CE 27XYZ")
     assert reqs == [StockRequest("TCS")]

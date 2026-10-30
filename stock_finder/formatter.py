@@ -1,5 +1,6 @@
 """Plain-text Telegram replies: verdict, the key drivers, then every analysis parameter with its value and target."""
 
+import re
 from datetime import datetime
 
 from .engine import INTRADAY_MIN, LONG_TERM, LONG_TERM_MIN, NO_DATA, NOT_RECOMMENDED, OPTION_BUY, OPTION_MIN
@@ -27,47 +28,92 @@ def _param(d: Driver) -> str:
     return f"  {_mark(d)} {d.name}: {d.value} (want {d.want}) {pts}/{d.max_points:g}"
 
 
-def _why(score: Score) -> str:
-    good = [d.text for d in score.top(True, 2)]
-    bad = [d.text for d in score.top(False, 2)]
-    parts = []
-    if good:
-        parts.append("strengths: " + ", ".join(good))
-    if bad:
-        parts.append("weaknesses: " + ", ".join(bad))
-    return "  Why: " + "; ".join(parts) if parts else ""
-
-
-def _section(title: str, score: Score) -> list[str]:
-    lines = [title]
-    why = _why(score)
-    if why:
-        lines.append(why)
-    lines += [_param(d) for d in score.drivers]
-    return lines
-
-
 def _price(x: float | None) -> str:
     return f"₹{x:,.2f}" if x is not None else "₹—"
 
 
+def _parse_name(raw: str | None) -> tuple[str | None, str | None]:
+    if not raw:
+        return None, None
+    if " · " in raw:
+        company_raw, sector = raw.split(" · ", 1)
+    else:
+        company_raw, sector = raw, None
+    company = re.sub(
+        r"(?i)\s+(?:Limited|Ltd\.?|Corporation|Corp\.?|Incorporated|Inc\.?)\s*$",
+        "",
+        company_raw.strip(),
+    ).strip()
+    if company.isupper() and len(company) > 3:
+        company = company.title()
+    return company or None, sector or None
+
+
+def _critical_drivers(score: Score, max_pos: int = 4, max_neg: int = 1) -> list[Driver]:
+    pos = score.top(True, max_pos)
+    neg = score.top(False, max_neg)
+    seen: set[str] = set()
+    picked: list[Driver] = []
+    for d in pos + neg:
+        if d.name not in seen:
+            seen.add(d.name)
+            picked.append(d)
+    return picked
+
+
 def format_stock(r: StockReport) -> str:
+    company, sector = _parse_name(r.name)
+    title = f"{company} ({r.symbol})" if company and company != r.symbol else r.symbol
     if r.verdict == NO_DATA:
-        return f"⚪ {r.symbol}: {NO_DATA} ({r.error})"
+        return f"⚪ {title}: {NO_DATA} ({r.error})"
+
     icon = "❌" if r.verdict == NOT_RECOMMENDED else "✅"
-    lines = [f"{icon} {r.symbol} {_price(r.price)}: {r.verdict}"]
-    if r.name and r.name != r.symbol:
-        lines.append(f"  {r.name}")
+    lines = [f"{icon} {title} {_price(r.price)}: {r.verdict}"]
+    if sector:
+        lines.append(f"  {sector}")
+
+    if r.verdict == NOT_RECOMMENDED:
+        scores = []
+        if r.long_term:
+            scores.append(f"Long-term {r.long_term.score:.0f}/100")
+        if r.intraday:
+            scores.append(f"Intraday {r.intraday.score:.0f}/100")
+        if scores:
+            lines.append(f"  {' · '.join(scores)} (need 65)")
+        shortfalls: list[Driver] = []
+        if r.long_term:
+            shortfalls.extend(r.long_term.top(False, 2))
+        if r.intraday:
+            shortfalls.extend(r.intraday.top(False, 1))
+        for d in shortfalls[:3]:
+            lines.append(_param(d))
+        lines += [f"  ⚠ {f}" for f in r.flags]
+        return "\n".join(lines)
+
     if r.long_term:
-        mark = "✅" if LONG_TERM in r.verdict else "—"
-        lines += _section(f"📈 Long-term {r.long_term.score:.0f}/100 (need {LONG_TERM_MIN}) {mark}", r.long_term)
+        ok = LONG_TERM in r.verdict
+        mark = "✅" if ok else "—"
+        lines.append(f"📈 Long-term {r.long_term.score:.0f}/100 (need {LONG_TERM_MIN}) {mark}")
+        if ok:
+            for d in _critical_drivers(r.long_term, max_pos=4, max_neg=1):
+                lines.append(_param(d))
+        else:
+            for d in r.long_term.top(False, 2):
+                lines.append(_param(d))
+
     if r.intraday and r.intraday_plan:
         p = r.intraday_plan
         ok = r.intraday.score >= INTRADAY_MIN
-        lines += _section(f"⚡ Intraday {p.direction} {r.intraday.score:.0f}/100 (need {INTRADAY_MIN}) "
-                          f"{'✅' if ok else '—'}", r.intraday)
+        mark = "✅" if ok else "—"
+        lines.append(f"⚡ Intraday {p.direction} {r.intraday.score:.0f}/100 (need {INTRADAY_MIN}) {mark}")
         if ok:
+            for d in _critical_drivers(r.intraday, max_pos=4, max_neg=1):
+                lines.append(_param(d))
             lines.append(f"  Plan {p.direction}: entry {p.entry:,.2f} · stop {p.stop:,.2f} · target {p.target:,.2f}")
+        else:
+            for d in r.intraday.top(False, 2):
+                lines.append(_param(d))
+
     lines += [f"  ⚠ {f}" for f in r.flags]
     return "\n".join(lines)
 
@@ -84,7 +130,13 @@ def format_option(r: OptionReport) -> str:
              f"max pain {r.max_pain:g}" if r.max_pain is not None else None]
     lines.append("  " + " · ".join(f for f in facts if f))
     if r.score:
-        lines += _section(f"🎯 Option buy {r.score.score:.0f}/100 (need {OPTION_MIN})", r.score)
+        lines.append(f"🎯 Option buy {r.score.score:.0f}/100 (need {OPTION_MIN})")
+        if r.verdict == OPTION_BUY:
+            for d in _critical_drivers(r.score, max_pos=4, max_neg=1):
+                lines.append(_param(d))
+        else:
+            for d in r.score.top(False, 2):
+                lines.append(_param(d))
     lines += [f"  ⚠ {f}" for f in r.flags]
     return "\n".join(lines)
 

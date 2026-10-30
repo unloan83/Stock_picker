@@ -7,3 +7,4 @@ __pycache__/
 .env
 *.db
 nse_equity_list.csv
+*.log
