@@ -1,4 +1,4 @@
-"""Plain-text Telegram replies: verdict, the key drivers, then every analysis parameter with its value and target."""
+"""Plain-text Telegram replies: verdict plus the critical parameters behind it (value, target, points)."""
 
 import re
 from datetime import datetime
@@ -79,7 +79,7 @@ def format_stock(r: StockReport) -> str:
         if r.intraday:
             scores.append(f"Intraday {r.intraday.score:.0f}/100")
         if scores:
-            lines.append(f"  {' · '.join(scores)} (need 65)")
+            lines.append(f"  {' · '.join(scores)} (need {LONG_TERM_MIN})")
         shortfalls: list[Driver] = []
         if r.long_term:
             shortfalls.extend(r.long_term.top(False, 2))

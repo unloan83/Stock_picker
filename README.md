@@ -1,22 +1,26 @@
 # Stock Finder
 
 A Telegram bot for the NSE. Send it a list of stocks and options (best between 09:30 and 10:00 IST). For each one it
-replies with a verdict, the main reasons for it, and every parameter it was scored on (value, target, points).
+replies with a verdict and the critical parameters behind it (value, target, points).
 
 ```
-✅ TCS ₹4,118.40: LONG TERM
-  Tata Consultancy Services Limited · Technology
-📈 Long-term 78/100 (need 65) ✅
-  Why: strengths: ROE 46%, Price vs 200-day avg ...; weaknesses: 12-month momentum -4%
-  ✓ Price vs 200-day avg: 4,118.4 vs 3,950.0 (+4.3%) (want above) +10/10
-  ✗ 12-month momentum: -4% (want >+10%) 0/10
-  ✓ ROE: 46% (want >15%) +10/10
-  ◐ P/E: 44.0 (want 0-40) +4/8
-  ... every parameter, with its value, target and points
-⚡ Intraday LONG 55/100 (need 65) —
-  ✓ Price vs VWAP: 4,118.40 vs 4,108.20 (want above) +25/25
-  ...
+✅ APL Apollo Tubes (APLAPOLLO) ₹2,195.00: LONG TERM
+  Basic Materials
+📈 Long-term 86/100 (need 65) ✅
+  ✓ Price vs 200-day avg: 2,165.3 vs 2,002.1 (+8.2%) (want above) +10/10
+  ✓ 12-month momentum: +27% (want >+10%) +10/10
+  ✓ ROE: 25% (want >15%) +10/10
+  ✗ Volatility (1 yr): 44% (want <25%) 0/10
+
+❌ United Spirits (UNITDSPR) ₹1,289.50: NOT RECOMMENDED
+  Consumer Defensive
+  Long-term 58/100 (need 65)
+  ✗ Price vs 200-day avg: 1,227.4 vs 1,359.7 (-9.7%) (want above) 0/10
+  ✗ Earnings growth (yoy): -8% (want >+10%) 0/8
 ```
+
+A recommended strategy shows its top 4 strengths and its biggest shortfall; a strategy that missed shows its two
+biggest shortfalls. Notes in brackets such as `(short term)` are ignored.
 
 Marks: ✓ full points · ◐ partial · ✗ none or penalty · – no data (not scored).
 

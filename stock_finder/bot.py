@@ -26,7 +26,7 @@ HELP = (
     "  BANKNIFTY 52000 PE 27NOV   (expiry optional; nearest by default)\n\n"
     "Each stock gets LONG TERM / INTRADAY LONG|SHORT / NOT RECOMMENDED.\n"
     "Each option gets BUY / AVOID for an option buyer.\n"
-    "Every reply lists each parameter: its value, the target and the points earned.\n"
+    "Each reply shows the key parameters behind the verdict: value, target and points.\n"
     "Intraday signals need market data after 09:15 IST; best used 09:30-10:00.\n\n"
     "Every request is recorded. Commands:\n"
     "  /today   what was recorded today\n"
