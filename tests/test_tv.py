@@ -147,3 +147,27 @@ def test_read_wav_returns_float_samples(tmp_path):
         w.writeframes(b"\0" * 8)
     with pytest.raises(ValueError, match="mono"):
         read_wav(stereo)
+
+
+def test_recording_test_picks_the_broadcast_covering_the_window():
+    import importlib.util
+    from datetime import datetime
+
+    from stock_finder.engine import IST
+
+    spec = importlib.util.spec_from_file_location("tv_recording_test", "scripts/tv_recording_test.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+
+    w0 = datetime(2026, 11, 2, 8, 30, tzinfo=IST)
+    w1 = datetime(2026, 11, 2, 9, 15, tzinfo=IST)
+    ts = lambda h, m: datetime(2026, 11, 2, h, m, tzinfo=IST).timestamp()  # noqa: E731
+    infos = [
+        {"id": "live", "live_status": "is_live", "release_timestamp": ts(6, 0), "duration": None},
+        {"id": "early", "live_status": "was_live", "release_timestamp": ts(7, 0), "duration": 100 * 60},  # to 08:40
+        {"id": "morning", "live_status": "was_live", "release_timestamp": ts(8, 0), "duration": 120 * 60},
+        {"id": "tiny", "live_status": "was_live", "release_timestamp": ts(9, 12), "duration": 600},
+    ]
+    info, start, a, b = mod.pick_recording(infos, w0, w1)
+    assert info["id"] == "morning" and (a, b) == (w0, w1) and start.hour == 8
+    assert mod.pick_recording(infos[:1] + infos[3:], w0, w1) is None
