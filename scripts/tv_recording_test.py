@@ -6,6 +6,7 @@ writes transcripts where `python -m stock_finder tv-rebuild` reads them, and gra
 from the Hindi channels and reads their on-screen text if rapidocr is installed.
 
     python scripts/tv_recording_test.py [--date 2026-11-02] [--start 08:30] [--end 09:15] [--out tv_vod]
+    python scripts/tv_recording_test.py --ocr-only      # re-read on-screen text from frames already downloaded
 
 Then:  TV_DIR=tv_vod/base  python -m stock_finder tv-rebuild <date>
        TV_DIR=tv_vod/small python -m stock_finder tv-rebuild <date>
@@ -28,7 +29,9 @@ from stock_finder.tv_capture import CHUNK_SECONDS, SAMPLE_RATE, Channel, Transcr
 
 FRAME_EVERY = 10  # seconds
 MIN_OVERLAP = timedelta(minutes=5)
-CALL_WORDS = re.compile(r"\b(BUY|SELL|TARGET|TGT|STOP ?LOSS|SL|INTRADAY|POSITIONAL|LONG TERM|SHORT TERM)\b", re.I)
+# No trailing word boundary: on-screen OCR often drops spaces ("BUYGRASIM", "SL2950").
+CALL_WORDS = re.compile(r"\b(BUY|SELL|TARGET|TGT|STOP ?LOSS|SL(?=\s*\d)|INTRADAY|POSITIONAL|LONG ?TERM|SHORT ?TERM)",
+                        re.I)
 
 
 def pick_recording(infos: list[dict], w0: datetime, w1: datetime) -> tuple[dict, datetime, datetime, datetime] | None:
@@ -107,7 +110,7 @@ def ocr_frames(frame_dir: str, w0: datetime) -> tuple[int, int, float]:
     hits, t0 = 0, time.time()
     for i, f in enumerate(files):
         result, _ = ocr(f)
-        lines = [r[1] for r in (result or []) if r[2] > 0.6]
+        lines = [str(r[1]) for r in (result or []) if float(r[2]) > 0.6]  # rapidocr returns the score as a string
         if any(CALL_WORDS.search(x) for x in lines):
             hits += 1
             at = w0 + timedelta(seconds=i * FRAME_EVERY)
@@ -121,10 +124,17 @@ def main() -> None:
     p.add_argument("--start", default="08:30")
     p.add_argument("--end", default="09:15")
     p.add_argument("--out", default="tv_vod")
+    p.add_argument("--ocr-only", action="store_true", help="only read on-screen text from frames already in OUT/frames")
     args = p.parse_args()
     day = date.fromisoformat(args.date)
     w0 = datetime.combine(day, datetime.strptime(args.start, "%H:%M").time(), tzinfo=IST)
     w1 = datetime.combine(day, datetime.strptime(args.end, "%H:%M").time(), tzinfo=IST)
+    if args.ocr_only:
+        for frame_dir in sorted(glob.glob(os.path.join(args.out, "frames", "*"))):
+            print(f"# {os.path.basename(frame_dir)} (times assume the frames start at {w0:%H:%M})")
+            hits, total, per = ocr_frames(frame_dir, w0)
+            print(f"   {hits} call-like frame(s) of {total}, {per:.1f}s per frame")
+        return
     if shutil.which("ffmpeg") is None:
         sys.exit("ffmpeg not found on PATH")
     raw_dir = os.path.join(args.out, "raw")
