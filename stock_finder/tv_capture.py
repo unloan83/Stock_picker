@@ -1,6 +1,6 @@
 """Record the business channels' YouTube live streams and transcribe them while they record.
 
-Needs the `tv` extra (yt-dlp, faster-whisper) and the system `ffmpeg`. Each channel is recorded in 5-minute audio
+Needs the `tv` extra (yt-dlp, faster-whisper) and the system `ffmpeg`. Each channel is recorded in 2-minute audio
 chunks; finished chunks are transcribed straight away, so the shortlist is ready soon after recording stops.
 Hindi channels are translated to English so company names come out in Latin script.
 """
@@ -19,7 +19,7 @@ from .tv import Segment
 
 log = logging.getLogger(__name__)
 
-CHUNK_SECONDS = 300
+CHUNK_SECONDS = 120  # short chunks keep the backlog small when recording stops at 09:15
 
 
 @dataclass(frozen=True)
@@ -92,22 +92,30 @@ class Transcriber:
             return [(s.start, s.text) for s in segments]
 
 
-def capture_channel(channel: Channel, start: datetime, seconds: int, work_dir: str,
-                    transcriber: Transcriber) -> list[Segment]:
-    """Record one channel for `seconds`, transcribing each finished chunk; returns timed transcript segments."""
+def capture_channel(channel: Channel, start: datetime, seconds: int, work_dir: str, transcriber: Transcriber,
+                    deadline: datetime | None = None) -> tuple[list[Segment], int]:
+    """Record one channel for `seconds`, transcribing each finished chunk.
+
+    Returns (timed transcript segments, chunks skipped because `deadline` passed before they were transcribed).
+    """
     out_dir = os.path.join(work_dir, _slug(channel.name))
     os.makedirs(out_dir, exist_ok=True)
     proc = _record(channel, seconds, out_dir)
     done: set[str] = set()
     segments: list[Segment] = []
+    skipped = 0
 
     def transcribe_ready(final: bool) -> None:
+        nonlocal skipped
         chunks = sorted(glob.glob(os.path.join(out_dir, "chunk_*.wav")))
         ready = chunks if final else chunks[:-1]  # the newest chunk is still being written
         for path in ready:
             if path in done:
                 continue
             done.add(path)
+            if deadline is not None and datetime.now(deadline.tzinfo) >= deadline:
+                skipped += 1
+                continue
             k = int(os.path.basename(path)[6:9])
             try:
                 for offset, text in transcriber.transcribe(path, channel.language):
@@ -127,21 +135,23 @@ def capture_channel(channel: Channel, start: datetime, seconds: int, work_dir: s
     transcribe_ready(final=True)
     if not segments:
         log.warning("%s: no speech captured (stream offline or URL changed?)", channel.name)
-    return sorted(segments, key=lambda s: s.at)
+    if skipped:
+        log.warning("%s: %d chunk(s) not transcribed before the deadline", channel.name, skipped)
+    return sorted(segments, key=lambda s: s.at), skipped
 
 
-def capture_all(channels: list[Channel], start: datetime, seconds: int, work_dir: str,
-                model_size: str) -> dict[str, list[Segment]]:
-    """Record and transcribe all channels in parallel."""
+def capture_all(channels: list[Channel], start: datetime, seconds: int, work_dir: str, model_size: str,
+                deadline: datetime | None = None) -> dict[str, tuple[list[Segment], int]]:
+    """Record and transcribe all channels in parallel; per channel (segments, chunks skipped at the deadline)."""
     transcriber = Transcriber(model_size)
-    results: dict[str, list[Segment]] = {}
+    results: dict[str, tuple[list[Segment], int]] = {}
 
     def run(ch: Channel) -> None:
         try:
-            results[ch.name] = capture_channel(ch, start, seconds, work_dir, transcriber)
+            results[ch.name] = capture_channel(ch, start, seconds, work_dir, transcriber, deadline)
         except Exception:
             log.exception("%s: capture failed", ch.name)
-            results[ch.name] = []
+            results[ch.name] = ([], 0)
 
     threads = [threading.Thread(target=run, args=(ch,), name=_slug(ch.name)) for ch in channels]
     for t in threads:

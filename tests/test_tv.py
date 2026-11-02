@@ -102,3 +102,21 @@ def test_lower_case_word_is_not_a_company():
 def test_nearest_call_word_wins():
     found = mentions("Accumulate Infosys, target 1900. Avoid Vodafone Idea for now.")
     assert [(m.symbol, m.action, m.target) for m in found] == [("INFY", "BUY", 1900.0), ("IDEA", "SELL", None)]
+
+
+def test_called_stocks_get_engine_verdicts(tmp_path):
+    from stock_finder.resolver import SymbolResolver
+    from stock_finder.store import RecommendationLog
+    from stock_finder.tv_run import verdicts
+    from tests.fakes import FakeMarket, daily_series
+
+    items = shortlist(mentions("Buy Tata Steel target 1250. Reliance results today."), LISTING)
+    resolver = SymbolResolver(None, list_loader=lambda: LISTING, searcher=lambda q: [])
+    md = FakeMarket({"TATASTEEL": daily_series(), "NIFTY": daily_series()})
+    db = str(tmp_path / "r.db")
+    replies = verdicts(items, md, resolver, AT, db, [11, 22])
+    text = "\n".join(replies)
+    assert "TATASTEEL" in text and "RELIANCE" not in text  # only stocks with a call are analysed
+    rows = RecommendationLog(db).between(AT.replace(hour=0), AT.replace(hour=23))
+    assert sorted((r.chat_id, r.symbol) for r in rows) == [(11, "TATASTEEL"), (22, "TATASTEEL")]
+    assert verdicts(shortlist(mentions("Reliance results today."), LISTING), md, resolver, AT, db, []) == []

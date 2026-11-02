@@ -103,7 +103,9 @@ market is still open.
 ## Morning TV shortlist (optional)
 
 Every weekday from 08:30 to 09:15 IST the bot can record four business channels' YouTube live streams (Zee Business,
-CNBC Awaaz, NDTV Profit, CNBC-TV18), transcribe them, and list the stocks that were called BUY or SELL:
+CNBC Awaaz, NDTV Profit, CNBC-TV18), transcribe them, and list the stocks that were called BUY or SELL. At 09:15 the
+called stocks go straight into the verdict engine above, and by about 09:20 Telegram gets the shortlist followed by a
+normal verdict reply for each called stock:
 
 ```
 📺 TV shortlist 02 Nov 2026 (08:30-09:15)
@@ -114,13 +116,18 @@ Channels: CNBC-TV18, Zee Business
 ```
 
 How it works:
-1. `yt-dlp` and `ffmpeg` record each live stream's audio in 5-minute chunks.
+1. `yt-dlp` and `ffmpeg` record each live stream's audio in 2-minute chunks.
 2. Whisper (`faster-whisper`, free, runs offline on the CPU) transcribes each chunk as soon as it is finished. Hindi
    channels are translated to English so company names come out in Latin script.
 3. Company names and symbols are matched against NSE's equity list. The nearest call word decides the call (buy,
    accumulate, खरीद → BUY; sell, short, avoid, बेच → SELL), and any target or stop-loss number is read from what follows.
-4. Stocks called on more channels rank first. The list goes to `ALLOWED_CHAT_IDS` on Telegram, every mention is stored
-   in the `tv_mentions` table of `STOCK_FINDER_DB`, and the transcripts are kept in `TV_DIR/<date>/` for checking.
+4. Stocks called on more channels rank first. Every mention is stored in the `tv_mentions` table of
+   `STOCK_FINDER_DB`, and the transcripts are kept in `TV_DIR/<date>/` for checking.
+5. At 09:15 recording stops. Transcription stops at 09:18; any chunk not done by then is skipped and named in the
+   message. The stocks called BUY/SELL (up to 25) are then run through the verdict engine. The verdicts are logged like
+   any request, so `/today` and the weekly `/report` include them. The shortlist and the verdicts go to
+   `ALLOWED_CHAT_IDS`. At 09:15-09:20 there are almost no intraday bars yet, so intraday verdicts carry the
+   early-session flag.
 
 `/tv` in the bot shows today's list again, including stocks mentioned without a call.
 
@@ -142,8 +149,8 @@ Limits:
 - Speech-to-text gets some names wrong, especially in Hindi. Check the transcripts during the first weeks.
 - Single words that are also ordinary words are ignored unless capitalised; a few common ones are never matched.
 - "Don't buy" is not understood as a negative call.
-- Transcription speed depends on the CPU. The `small` model is the default; set `TV_WHISPER_MODEL=base` if the list
-  arrives too late.
+- Transcription must keep up with four live channels on the CPU. The default `base` model is the fast one; try
+  `TV_WHISPER_MODEL=small` for better accuracy only if the message shows no skipped chunks.
 - If a channel's YouTube handle changes, set `TV_CHANNELS`.
 
 This is a record of what TV said, not a recommendation. It is logged so its value can be measured later.

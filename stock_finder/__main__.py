@@ -52,7 +52,7 @@ def _tv(args: list[str]) -> None:
         return
     day = date.fromisoformat(args[1]) if len(args) > 1 else now_ist().date()
     resolver = SymbolResolver(os.environ.get("NSE_LIST_CACHE", "nse_equity_list.csv"))
-    text, _ = build_from_transcripts(day, resolver, os.environ.get("STOCK_FINDER_DB", "stock_finder.db"))
+    text, _, _ = build_from_transcripts(day, resolver, os.environ.get("STOCK_FINDER_DB", "stock_finder.db"))
     print(text)
 
 
