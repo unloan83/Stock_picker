@@ -120,3 +120,30 @@ def test_called_stocks_get_engine_verdicts(tmp_path):
     rows = RecommendationLog(db).between(AT.replace(hour=0), AT.replace(hour=23))
     assert sorted((r.chat_id, r.symbol) for r in rows) == [(11, "TATASTEEL"), (22, "TATASTEEL")]
     assert verdicts(shortlist(mentions("Reliance results today."), LISTING), md, resolver, AT, db, []) == []
+
+
+def test_read_wav_returns_float_samples(tmp_path):
+    import struct
+    import wave
+
+    import pytest
+
+    from stock_finder.tv_capture import SAMPLE_RATE, read_wav
+
+    path = str(tmp_path / "chunk_000.wav")
+    with wave.open(path, "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(SAMPLE_RATE)
+        w.writeframes(struct.pack("<3h", 0, 16384, -32768))
+    audio = read_wav(path)
+    assert audio.dtype.name == "float32" and list(audio) == [0.0, 0.5, -1.0]
+
+    stereo = str(tmp_path / "stereo.wav")
+    with wave.open(stereo, "wb") as w:
+        w.setnchannels(2)
+        w.setsampwidth(2)
+        w.setframerate(SAMPLE_RATE)
+        w.writeframes(b"\0" * 8)
+    with pytest.raises(ValueError, match="mono"):
+        read_wav(stereo)

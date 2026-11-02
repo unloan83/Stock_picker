@@ -12,6 +12,7 @@ import shutil
 import subprocess
 import threading
 import time
+import wave
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
@@ -20,6 +21,7 @@ from .tv import Segment
 log = logging.getLogger(__name__)
 
 CHUNK_SECONDS = 120  # short chunks keep the backlog small when recording stops at 09:15
+SAMPLE_RATE = 16000  # what Whisper expects
 
 
 @dataclass(frozen=True)
@@ -68,7 +70,8 @@ def _record(channel: Channel, seconds: int, out_dir: str) -> subprocess.Popen:
     ytdlp = subprocess.Popen(["yt-dlp", "--quiet", "--no-warnings", "-f", "bestaudio/best", "-o", "-", channel.url],
                              stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
     ffmpeg = subprocess.Popen(
-        ["ffmpeg", "-loglevel", "error", "-i", "pipe:0", "-t", str(seconds), "-vn", "-ac", "1", "-ar", "16000",
+        ["ffmpeg", "-loglevel", "error", "-i", "pipe:0", "-t", str(seconds), "-vn", "-ac", "1",
+         "-ar", str(SAMPLE_RATE), "-c:a", "pcm_s16le",
          "-f", "segment", "-segment_time", str(CHUNK_SECONDS), os.path.join(out_dir, "chunk_%03d.wav")],
         stdin=ytdlp.stdout, stderr=subprocess.PIPE)
     assert ytdlp.stdout is not None
@@ -77,17 +80,38 @@ def _record(channel: Channel, seconds: int, out_dir: str) -> subprocess.Popen:
     return ffmpeg
 
 
+def read_wav(path: str):  # -> numpy float32 array
+    """16 kHz mono 16-bit WAV as float32 samples in [-1, 1].
+
+    Reading the chunk ourselves keeps faster-whisper away from its PyAV file decoder, which breaks on newer PyAV
+    releases (`open() got an unexpected keyword argument 'metadata_errors'`).
+    """
+    import numpy as np
+
+    with wave.open(path, "rb") as w:
+        if (w.getframerate(), w.getnchannels(), w.getsampwidth()) != (SAMPLE_RATE, 1, 2):
+            raise ValueError(f"{path}: expected {SAMPLE_RATE} Hz mono 16-bit WAV, got "
+                             f"{w.getframerate()} Hz, {w.getnchannels()} ch, {8 * w.getsampwidth()}-bit")
+        frames = w.readframes(w.getnframes())
+    return np.frombuffer(frames, dtype="<i2").astype(np.float32) / 32768.0
+
+
 class Transcriber:
     def __init__(self, model_size: str) -> None:
+        import numpy as np
         from faster_whisper import WhisperModel
 
         self._model = WhisperModel(model_size, device="cpu", compute_type="int8")
         self._lock = threading.Lock()  # one chunk at a time: the CPU is the limit anyway
+        # Fail now, not after a whole recording, if the speech model cannot run on this machine.
+        segments, _ = self._model.transcribe(np.zeros(SAMPLE_RATE, dtype=np.float32), language="en", beam_size=1)
+        list(segments)
 
     def transcribe(self, path: str, language: str) -> list[tuple[float, str]]:
         task = "translate" if language != "en" else "transcribe"
+        audio = read_wav(path)
         with self._lock:
-            segments, _ = self._model.transcribe(path, language=language, task=task, vad_filter=True,
+            segments, _ = self._model.transcribe(audio, language=language, task=task, vad_filter=True,
                                                  beam_size=1)
             return [(s.start, s.text) for s in segments]
 
