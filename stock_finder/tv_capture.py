@@ -22,6 +22,8 @@ log = logging.getLogger(__name__)
 
 CHUNK_SECONDS = 120  # short chunks keep the backlog small when recording stops at 09:15
 SAMPLE_RATE = 16000  # what Whisper expects
+# TV_KEEP_AUDIO=1 keeps the WAV chunks (about 2 MB per channel-minute) so another model can be tried on them later.
+KEEP_AUDIO = os.environ.get("TV_KEEP_AUDIO", "") not in ("", "0")
 
 
 @dataclass(frozen=True)
@@ -147,7 +149,8 @@ def capture_channel(channel: Channel, start: datetime, seconds: int, work_dir: s
                                             text))
             except Exception:
                 log.exception("%s: transcription failed for %s", channel.name, path)
-            os.remove(path)
+            if not KEEP_AUDIO:
+                os.remove(path)
 
     while proc.poll() is None:
         transcribe_ready(final=False)

@@ -152,6 +152,8 @@ Limits:
 - Transcription must keep up with four live channels on the CPU. The default `base` model is the fast one; try
   `TV_WHISPER_MODEL=small` for better accuracy only if the message shows no skipped chunks.
 - If a channel's YouTube handle changes, set `TV_CHANNELS`.
+- `TV_KEEP_AUDIO=1` keeps the recorded WAV chunks (about 2 MB per channel-minute) so a larger model can be tried on
+  the same audio afterwards.
 
 This is a record of what TV said, not a recommendation. It is logged so its value can be measured later.
 
