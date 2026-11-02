@@ -30,7 +30,8 @@ HELP = (
     "Intraday signals need market data after 09:15 IST; best used 09:30-10:00.\n\n"
     "Every request is recorded. Commands:\n"
     "  /today   what was recorded today\n"
-    "  /report  this week's hit/fail report (sent automatically every Saturday 10:00 IST)"
+    "  /report  this week's hit/fail report (sent automatically every Saturday 10:00 IST)\n"
+    "  /tv      stocks called on business TV this morning (08:30-09:15)"
 )
 MAX_ITEMS = 25
 REPORT_WEEKDAY = 5  # Saturday (Monday = 0)
@@ -81,6 +82,16 @@ async def today_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not await _guard(update, context):
         return
     text = todays_list(context.bot_data["log"], now_ist(), update.effective_chat.id)  # type: ignore[union-attr]
+    await _reply_long(update, text)
+
+
+async def tv_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not await _guard(update, context):
+        return
+    from .tv_run import previous_text
+
+    text = await asyncio.to_thread(previous_text, now_ist().date(), context.bot_data["log"].path,
+                                   context.bot_data["resolver"])
     await _reply_long(update, text)
 
 
@@ -144,6 +155,7 @@ def build_app(token: str) -> Application:
     app.add_handler(CommandHandler(["start", "help"], help_cmd))
     app.add_handler(CommandHandler("report", report_cmd))
     app.add_handler(CommandHandler("today", today_cmd))
+    app.add_handler(CommandHandler("tv", tv_cmd))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, analyse_msg))
     return app
 

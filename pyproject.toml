@@ -17,6 +17,8 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=8.0", "ruff>=0.5"]
+# Morning TV shortlist (also needs the system ffmpeg)
+tv = ["yt-dlp>=2025.1.15", "faster-whisper>=1.1"]
 
 [tool.setuptools.packages.find]
 include = ["stock_finder*"]

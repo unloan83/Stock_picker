@@ -1,0 +1,9 @@
+[Unit]
+Description=Run the morning TV shortlist on weekdays at 08:29 IST
+
+[Timer]
+OnCalendar=Mon..Fri *-*-* 08:29:00 Asia/Kolkata
+Persistent=false
+
+[Install]
+WantedBy=timers.target
