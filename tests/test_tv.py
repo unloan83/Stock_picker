@@ -291,3 +291,34 @@ def test_real_broadcast_gives_exactly_the_calls_made():
         ("LTM", "BUY", None, None),
         ("ASTRAL", "SELL", None, None),
     }
+
+
+def test_failed_recording_reports_what_yt_dlp_said(tmp_path, monkeypatch, caplog):
+    import logging
+    import os
+    import stat
+
+    from stock_finder.tv_capture import Channel, capture_channel
+
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    fakes = {
+        "yt-dlp": "#!/bin/sh\necho \"ERROR: [youtube] abc: Sign in to confirm you're not a bot\" >&2\nexit 1\n",
+        "ffmpeg": "#!/bin/sh\ncat >/dev/null\necho 'Error opening input file pipe:0.' >&2\nexit 183\n",
+    }
+    for name, body in fakes.items():
+        path = bin_dir / name
+        path.write_text(body)
+        path.chmod(path.stat().st_mode | stat.S_IEXEC)
+    monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ['PATH']}")
+    monkeypatch.setenv("TV_YTDLP_COOKIES", "/x/cookies.txt")
+
+    class NoTranscriber:
+        def transcribe(self, path, language):
+            raise AssertionError("nothing to transcribe")
+
+    with caplog.at_level(logging.WARNING):
+        segments, skipped = capture_channel(Channel("Zee Business", "https://example/live", "hi"), AT, 60,
+                                            str(tmp_path / "work"), NoTranscriber())
+    assert segments == [] and skipped == 0
+    assert "yt-dlp said: ERROR: [youtube] abc: Sign in to confirm you're not a bot" in caplog.text

@@ -9,6 +9,7 @@ Hindi channels are translated to English so company names come out in Latin scri
 import glob
 import logging
 import os
+import shlex
 import shutil
 import subprocess
 import threading
@@ -74,14 +75,33 @@ def check_tools() -> list[str]:
     return missing
 
 
+def _tail(path: str, chars: int = 400) -> str:
+    """Last error-looking lines of a log file (yt-dlp prints 'ERROR: ...'), or its tail."""
+    try:
+        with open(path, encoding="utf-8", errors="replace") as fh:
+            text = fh.read()
+    except OSError:
+        return ""
+    errors = [line for line in text.splitlines() if "ERROR" in line or "WARNING" in line]
+    return (" | ".join(errors) if errors else text.strip())[-chars:]
+
+
 def _slug(name: str) -> str:
     return "".join(c if c.isalnum() else "_" for c in name).strip("_").lower()
 
 
 def _record(channel: Channel, seconds: int, out_dir: str) -> subprocess.Popen:
     """Start yt-dlp | ffmpeg writing 16 kHz mono WAV chunks into out_dir; returns the ffmpeg process."""
-    ytdlp = subprocess.Popen(["yt-dlp", "--quiet", "--no-warnings", "-f", "bestaudio/best", "-o", "-", channel.url],
-                             stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+    cmd = ["yt-dlp", "--quiet", "-f", "bestaudio/best", "-o", "-"]
+    # YouTube may challenge cloud servers ("confirm you're not a bot"): TV_YTDLP_COOKIES points at a cookies.txt
+    # exported from a browser signed in to YouTube; TV_YTDLP_ARGS adds any other yt-dlp options (e.g. --proxy URL).
+    if os.environ.get("TV_YTDLP_COOKIES"):
+        cmd += ["--cookies", os.environ["TV_YTDLP_COOKIES"]]
+    cmd += shlex.split(os.environ.get("TV_YTDLP_ARGS", ""))
+    # yt-dlp's errors go to a file so a failed recording says why (the WAV chunks only show "no input").
+    ytdlp_log = open(os.path.join(out_dir, "yt-dlp.log"), "ab")  # noqa: SIM115 - closed by the child exiting
+    ytdlp = subprocess.Popen([*cmd, channel.url], stdout=subprocess.PIPE, stderr=ytdlp_log)
+    ytdlp_log.close()
     ffmpeg = subprocess.Popen(
         ["ffmpeg", "-loglevel", "error", "-i", "pipe:0", "-t", str(seconds), "-vn", "-ac", "1",
          "-ar", str(SAMPLE_RATE), "-c:a", "pcm_s16le",
@@ -232,6 +252,9 @@ def capture_channel(channel: Channel, start: datetime, seconds: int, work_dir: s
     proc.ytdlp.kill()  # type: ignore[attr-defined]
     if proc.returncode != 0:
         log.warning("%s: recorder exited %s: %s", channel.name, proc.returncode, err.strip()[-300:])
+        ytdlp_err = _tail(os.path.join(out_dir, "yt-dlp.log"))
+        if ytdlp_err:
+            log.warning("%s: yt-dlp said: %s", channel.name, ytdlp_err)
     transcribe_ready(final=True)
     if not segments:
         log.warning("%s: no speech captured (stream offline or URL changed?)", channel.name)

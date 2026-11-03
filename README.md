@@ -149,7 +149,9 @@ Cipla, Bosch, ICICI Bank, Fortis, LTM BUY; Astral SELL) with their levels; `test
 Limits:
 - Groq's free tier limits audio per hour per model. Hindi and English channels use different models, so the four
   default channels fit; if Groq refuses a chunk, it is retried and, failing that, named in the message.
-- YouTube may block or challenge some cloud server addresses; the message then says which channels gave no audio.
+- YouTube may block or challenge some cloud server addresses; the message then says which channels gave no audio and
+  the log shows yt-dlp's reason (`journalctl -u tv-shortlist`). `TV_YTDLP_COOKIES` (a browser cookies.txt) or
+  `TV_YTDLP_ARGS` (e.g. a proxy) can get past it.
 - Speech-to-text still gets some names wrong. Check the transcripts during the first weeks.
 - "Don't buy" is not understood as a negative call.
 - If a channel's YouTube handle changes, set `TV_CHANNELS`.
