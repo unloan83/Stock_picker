@@ -7,6 +7,7 @@ from the Hindi channels and reads their on-screen text if rapidocr is installed.
 
     python scripts/tv_recording_test.py [--date 2026-11-02] [--start 08:30] [--end 09:15] [--out tv_vod]
     python scripts/tv_recording_test.py --ocr-only      # re-read on-screen text from frames already downloaded
+    python scripts/tv_recording_test.py --reuse-audio --models groq --date 2026-11-02   # Groq on audio already here
 
 Then:  TV_DIR=tv_vod/base  python -m stock_finder tv-rebuild <date>
        TV_DIR=tv_vod/small python -m stock_finder tv-rebuild <date>
@@ -25,7 +26,15 @@ from datetime import date, datetime, timedelta
 
 from stock_finder.engine import IST
 from stock_finder.tv import Segment, write_transcript
-from stock_finder.tv_capture import CHUNK_SECONDS, SAMPLE_RATE, Channel, Transcriber, _slug, channels_from_env
+from stock_finder.tv_capture import (
+    CHUNK_SECONDS,
+    SAMPLE_RATE,
+    Channel,
+    GroqTranscriber,
+    Transcriber,
+    _slug,
+    channels_from_env,
+)
 
 FRAME_EVERY = 10  # seconds
 MIN_OVERLAP = timedelta(minutes=5)
@@ -96,8 +105,12 @@ def transcribe_dir(transcriber: Transcriber, chunk_dir: str, language: str, w0: 
     segments, took = [], []
     for k, path in enumerate(sorted(glob.glob(os.path.join(chunk_dir, "chunk_*.wav")))):
         t = time.time()
-        for offset, text in transcriber.transcribe(path, language):
-            segments.append(Segment(channel, w0 + timedelta(seconds=k * CHUNK_SECONDS + offset), text))
+        try:
+            for offset, text in transcriber.transcribe(path, language):
+                segments.append(Segment(channel, w0 + timedelta(seconds=k * CHUNK_SECONDS + offset), text))
+        except Exception as exc:
+            print(f"   {channel} {os.path.basename(path)}: FAILED {exc}")
+            continue
         took.append(time.time() - t)
     return segments, took
 
@@ -125,6 +138,10 @@ def main() -> None:
     p.add_argument("--end", default="09:15")
     p.add_argument("--out", default="tv_vod")
     p.add_argument("--ocr-only", action="store_true", help="only read on-screen text from frames already in OUT/frames")
+    p.add_argument("--models", default="base,small",
+                   help="comma-separated: base, small (local; small: Hindi only) and/or groq (all channels)")
+    p.add_argument("--reuse-audio", action="store_true",
+                   help="skip downloading; transcribe the audio chunks already in OUT/audio (starting at --start)")
     args = p.parse_args()
     day = date.fromisoformat(args.date)
     w0 = datetime.combine(day, datetime.strptime(args.start, "%H:%M").time(), tzinfo=IST)
@@ -142,7 +159,13 @@ def main() -> None:
 
     found: dict[str, tuple[Channel, datetime, str]] = {}  # name -> (channel, start of audio, chunk dir)
     frames: dict[str, tuple[str, datetime]] = {}
-    for ch in channels_from_env():
+    if args.reuse_audio:
+        for ch in channels_from_env():
+            chunk_dir = os.path.join(args.out, "audio", _slug(ch.name))
+            if glob.glob(os.path.join(chunk_dir, "chunk_*.wav")):
+                found[ch.name] = (ch, w0, chunk_dir)
+                print(f"## {ch.name}: reusing {chunk_dir}")
+    for ch in [] if args.reuse_audio else channels_from_env():
         print(f"\n## {ch.name}: looking for a recording covering {w0:%d %b %H:%M}-{w1:%H:%M} IST")
         try:
             pick = find_recording(ch, w0, w1)
@@ -174,12 +197,12 @@ def main() -> None:
         except Exception as exc:
             print(f"   FAILED to download/convert: {exc}")
 
-    for model in ("base", "small"):
-        todo = [v for v in found.values() if model == "base" or v[0].language != "en"]
+    for model in [m.strip() for m in args.models.split(",") if m.strip()]:
+        todo = [v for v in found.values() if model != "small" or v[0].language != "en"]
         if not todo:
             continue
         print(f"\n## Transcribing with the {model} model")
-        transcriber = Transcriber(model)
+        transcriber = GroqTranscriber() if model == "groq" else Transcriber(model)
         out_dir = os.path.join(args.out, model, day.isoformat())
         os.makedirs(out_dir, exist_ok=True)
         for ch, a, chunk_dir in todo:
@@ -205,7 +228,8 @@ def main() -> None:
         hits, total, per = ocr_frames(frame_dir, a)
         print(f"   {name}: {hits} call-like frame(s) of {total}, {per:.1f}s per frame")
 
-    print(f"\nDone. Transcripts: {args.out}/base/{day} and {args.out}/small/{day}")
+    models = [m.strip() for m in args.models.split(",") if m.strip()]
+    print("\nDone. Transcripts: " + ", ".join(f"{args.out}/{m}/{day}" for m in models))
 
 
 if __name__ == "__main__":

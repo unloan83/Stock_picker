@@ -171,3 +171,99 @@ def test_recording_test_picks_the_broadcast_covering_the_window():
     info, start, a, b = mod.pick_recording(infos, w0, w1)
     assert info["id"] == "morning" and (a, b) == (w0, w1) and start.hour == 8
     assert mod.pick_recording(infos[:1] + infos[3:], w0, w1) is None
+
+
+# --- misheard names (real lines from the 2 Nov CNBC Awaaz transcript) ---------------------------------------------
+
+AWAAZ_LISTING = {
+    "GRASIM": "Grasim Industries Limited", "CIPLA": "Cipla Limited", "ICICIBANK": "ICICI Bank Limited",
+    "BOSCHLTD": "Bosch Limited", "SPICEJET": "SpiceJet Limited", "HEROMOTOCO": "Hero MotoCorp Limited",
+    "SATIA": "Satia Industries Limited", "CRISIL": "CRISIL Limited", "SIPCOT": "Sipcot Ltd",
+}
+
+
+def test_misheard_names_near_a_call_are_matched():
+    index = build_index(AWAAZ_LISTING)
+
+    def found(text):
+        return [(m.symbol, m.action) for m in extract_mentions(Segment("CNBC Awaaz", AT, text), index)]
+
+    assert found("SIPLA's closing is 1378. We'll put in 1360. Stop loss is 1470.") == [("CIPLA", "MENTION")]
+    assert found("The first target of trading momentum will be in the future of ICCI bank.") == [
+        ("ICICIBANK", "MENTION")]
+    assert found("So, maintain the stop loss around 2950 and buy Grasim.") == [("GRASIM", "BUY")]
+    # No call word nearby, or a lower-case word: never matched loosely.
+    assert found("SIPLA is in the news today and everyone is talking about it for many reasons now.") == []
+    assert found("They have cut Target Spice") == []
+    assert found("Here is the first target, the level is 590 and JP Morgan agrees") == []
+
+
+# --- Groq transcription ------------------------------------------------------------------------------------------
+
+class _Resp:
+    def __init__(self, status, body=None, headers=None, text=""):
+        self.status_code, self._body, self.headers, self.text = status, body, headers or {}, text
+
+    def json(self):
+        return self._body
+
+
+class _Session:
+    def __init__(self, responses):
+        self.responses, self.calls = list(responses), []
+
+    def post(self, url, headers, data, files, timeout):
+        self.calls.append((url, dict(data), headers))
+        return self.responses.pop(0)
+
+
+def _wav(tmp_path):
+    import struct
+    import wave
+
+    path = str(tmp_path / "chunk_000.wav")
+    with wave.open(path, "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(16000)
+        w.writeframes(struct.pack("<2h", 0, 1))
+    return path
+
+
+def test_groq_translates_hindi_and_transcribes_english(tmp_path, monkeypatch):
+    import pytest
+
+    from stock_finder import tv_capture
+    from stock_finder.tv_capture import GroqTranscriber
+
+    monkeypatch.setattr(tv_capture.time, "sleep", lambda s: None)
+    path = _wav(tmp_path)
+    segments = [{"start": 1.5, "text": " Buy Grasim"}, {"start": 7, "text": " SL 2950"}]
+    ok = _Resp(200, {"text": "x", "segments": segments}, {"x-ratelimit-remaining-requests": "19"})
+    session = _Session([_Resp(429, headers={"retry-after": "1"}, text="slow down"), ok, _Resp(200, {"text": "hello"})])
+    groq = GroqTranscriber(api_key="k", session=session)
+
+    assert groq.transcribe(path, "hi") == [(1.5, " Buy Grasim"), (7.0, " SL 2950")]
+    url, data, headers = session.calls[-1]
+    assert url.endswith("/translations") and data["model"] == "whisper-large-v3" and "language" not in data
+    assert headers == {"Authorization": "Bearer k"} and len(session.calls) == 2  # retried once after 429
+
+    assert groq.transcribe(path, "en") == [(0.0, "hello")]
+    url, data, _ = session.calls[-1]
+    assert url.endswith("/transcriptions") and data["language"] == "en"
+
+    bad = GroqTranscriber(api_key="k", session=_Session([_Resp(401, text='{"error":"invalid key"}')]))
+    with pytest.raises(RuntimeError, match="Groq HTTP 401"):
+        bad.transcribe(path, "hi")
+
+
+def test_transcriber_choice(monkeypatch):
+    from stock_finder.tv_capture import use_groq
+
+    monkeypatch.delenv("TV_TRANSCRIBER", raising=False)
+    monkeypatch.delenv("GROQ_API_KEY", raising=False)
+    assert not use_groq()
+    monkeypatch.setenv("GROQ_API_KEY", "k")
+    assert use_groq()
+    monkeypatch.setenv("TV_TRANSCRIBER", "local")
+    assert not use_groq()
