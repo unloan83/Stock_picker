@@ -118,7 +118,9 @@ async def weekly_report_loop(app: Application) -> None:
 
 
 async def _post_init(app: Application) -> None:
-    app.create_task(weekly_report_loop(app))
+    # A plain asyncio task: PTB's create_task warns when called before the app is running. Keep a reference so the
+    # task is not garbage-collected.
+    app.bot_data["weekly_report_task"] = asyncio.get_running_loop().create_task(weekly_report_loop(app))
 
 
 async def analyse_msg(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
