@@ -7,6 +7,7 @@ The shortlist is a record of what was said, not a recommendation. Its value is u
 and checked against prices.
 """
 
+import difflib
 import re
 import sqlite3
 from collections import defaultdict
@@ -73,6 +74,17 @@ MAX_PHRASE = 5
 CALL_WINDOW = 25  # tokens after a mention searched for a call word, target or stop
 CALL_LOOKBACK = 6  # tokens before a mention searched for a call word ("buy Tata Steel")
 NUMBER_WINDOW = 5  # tokens after TARGET / STOPLOSS searched for the number
+# Misheard names ("ICCI bank", "SIPLA") are matched loosely, but only next to a call word and only when capitalised.
+FUZZY_CUTOFF = 0.8
+FUZZY_NEAR = 12  # tokens from a BUY/SELL/TARGET/STOPLOSS word
+FUZZY_MIN_CHARS = 4
+# Capitalised words that start sentences or name things that are not listed companies; never fuzzy-matched.
+_NOT_NAMES = {"HERE", "THERE", "THIS", "THAT", "THESE", "THOSE", "WHAT", "WHICH", "WHERE", "WHEN", "YOUR", "WILL",
+              "WOULD", "SHOULD", "COULD", "CURRENT", "LOOK", "LETS", "LET", "WELL", "ALSO", "BECAUSE", "AFTER",
+              "BEFORE", "ABOVE", "BELOW", "LEVEL", "LEVELS", "RANGE", "CLOSING", "OPENING", "SUPPORT", "RESISTANCE",
+              "MARGIN", "GROWTH", "PROFIT", "LOSS", "RUPEES", "POINTS", "PERCENT", "SIR", "MADAM", "JP", "MORGAN",
+              "GOLDMAN", "SACHS", "NOMURA", "JEFFERIES", "CLSA", "MACQUARIE", "CITI", "HSBC", "BERNSTEIN",
+              "STANLEY", "MOTILAL", "ANUJ", "ANIL", "SINGHAL", "SINGHVI", "OKAY", "YEAH", "THANK", "THANKS"}
 
 
 @dataclass
@@ -107,9 +119,15 @@ class ShortlistItem:
     first_at: datetime | None = None
 
 
-def build_index(listing: dict[str, str]) -> dict[tuple[str, ...], str]:
+class NameIndex(dict):
+    """Phrase (as tokens) -> NSE symbol, plus `fuzzy`: 1-2 word phrases as strings for loose matching."""
+
+    fuzzy: dict[str, str]
+
+
+def build_index(listing: dict[str, str]) -> NameIndex:
     """Phrase (as tokens) -> NSE symbol, from the official equity list plus TV aliases."""
-    index: dict[tuple[str, ...], str] = {}
+    index = NameIndex()
     for symbol, name in listing.items():
         words = tuple(w for w in normalise_name(name).split() if w not in _FILLER)
         if len(words) > 1 or (words and len(words[0]) >= 4 and words[0] not in STOP_SYMBOLS):
@@ -122,7 +140,44 @@ def build_index(listing: dict[str, str]) -> dict[tuple[str, ...], str]:
             index[tuple(_tokens(alias))] = symbol
     for symbol in SHORT_SYMBOLS & set(listing):
         index[(symbol,)] = symbol
+    index.fuzzy = {" ".join(k): v for k, v in index.items()
+                   if len(k) <= 2 and len("".join(k)) >= FUZZY_MIN_CHARS and not set(k) & _NOT_NAMES}
     return index
+
+
+def _fuzzy_hits(cased: list[tuple[str, bool]], taken: set[int], index: dict) -> list[tuple[int, int, str]]:
+    """Loose matches for capitalised words near a call word that matched nothing exactly."""
+    fuzzy = getattr(index, "fuzzy", None)
+    if not fuzzy:
+        return []
+    tokens = [t for t, _ in cased]
+    call_at = [i for i, t in enumerate(tokens) if t in BUY_WORDS | SELL_WORDS | TARGET_WORDS | STOP_WORDS]
+    hits: list[tuple[int, int, str]] = []
+    i = 0
+    while i < len(tokens):
+        near = any(abs(i - c) <= FUZZY_NEAR for c in call_at)
+        tok, lower = cased[i]
+        if (not near or i in taken or lower or tok in _NOT_NAMES or tok.isdigit() or len(tok) < 3
+                or tok in BUY_WORDS | SELL_WORDS | TARGET_WORDS | STOP_WORDS):
+            i += 1
+            continue
+        for n in (2, 1):
+            if i + n > len(tokens) or any(j in taken for j in range(i, i + n)):
+                continue
+            phrase = " ".join(tokens[i:i + n])
+            if len(phrase.replace(" ", "")) < FUZZY_MIN_CHARS:
+                continue
+            best = difflib.get_close_matches(phrase, fuzzy, n=2, cutoff=FUZZY_CUTOFF)
+            # Two different companies about equally close means we cannot tell which was said.
+            if best and (len(best) == 1 or fuzzy[best[0]] == fuzzy[best[1]]
+                         or difflib.SequenceMatcher(None, phrase, best[0]).ratio()
+                         - difflib.SequenceMatcher(None, phrase, best[1]).ratio() >= 0.05):
+                hits.append((i, i + n, fuzzy[best[0]]))
+                i += n
+                break
+        else:
+            i += 1
+    return hits
 
 
 def _tokens(text: str) -> list[str]:
@@ -183,6 +238,8 @@ def extract_mentions(segment: Segment, index: dict[tuple[str, ...], str]) -> lis
                 break
         else:
             i += 1
+    taken = {j for start, end, _ in hits for j in range(start, end)}
+    hits = sorted(hits + _fuzzy_hits(cased, taken, index))
 
     mentions = []
     for k, (start, end, sym) in enumerate(hits):

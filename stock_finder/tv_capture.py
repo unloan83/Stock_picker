@@ -53,9 +53,19 @@ def channels_from_env() -> list[Channel]:
     return out
 
 
+def use_groq() -> bool:
+    """Cloud transcription when TV_TRANSCRIBER=groq, or by default whenever GROQ_API_KEY is set."""
+    choice = os.environ.get("TV_TRANSCRIBER", "auto").strip().lower()
+    return choice == "groq" or (choice == "auto" and bool(os.environ.get("GROQ_API_KEY")))
+
+
 def check_tools() -> list[str]:
     """Missing prerequisites, as readable messages (empty when everything is installed)."""
     missing = [f"{tool} not found on PATH" for tool in ("ffmpeg", "yt-dlp") if shutil.which(tool) is None]
+    if use_groq():
+        if not os.environ.get("GROQ_API_KEY"):
+            missing.append("TV_TRANSCRIBER=groq but GROQ_API_KEY is not set")
+        return missing
     try:
         import faster_whisper  # noqa: F401
     except ImportError:
@@ -118,7 +128,69 @@ class Transcriber:
             return [(s.start, s.text) for s in segments]
 
 
-def capture_channel(channel: Channel, start: datetime, seconds: int, work_dir: str, transcriber: Transcriber,
+GROQ_URL = "https://api.groq.com/openai/v1/audio/{endpoint}"
+GROQ_TRANSLATE_MODEL = "whisper-large-v3"  # the only Groq Whisper model that translates to English
+GROQ_TRANSCRIBE_MODEL = "whisper-large-v3-turbo"
+# Whisper's prompt nudges spelling; market vocabulary helps it hear names like "ICICI Bank" and "Cipla" correctly.
+GROQ_PROMPT = ("Indian stock market TV. Nifty, Bank Nifty, Sensex, buy, sell, target, stop loss, intraday, positional. "
+               "Reliance, HDFC Bank, ICICI Bank, SBI, Infosys, TCS, Cipla, Bosch, Grasim, Tata Motors, Bajaj Finance.")
+
+
+class GroqTranscriber:
+    """Groq's hosted Whisper: a 2-minute chunk takes seconds, so all channels keep up with the broadcast.
+
+    Hindi is translated to English (as the local model does); English is transcribed. The audio is sent to Groq.
+    """
+
+    def __init__(self, api_key: str | None = None, session=None, max_retries: int = 3) -> None:
+        import requests
+
+        self._key = api_key or os.environ["GROQ_API_KEY"]
+        self._http = session or requests.Session()
+        self._retries = max_retries
+        self._limits_logged = False
+
+    def transcribe(self, path: str, language: str) -> list[tuple[float, str]]:
+        translate = language != "en"
+        data = {"model": GROQ_TRANSLATE_MODEL if translate else GROQ_TRANSCRIBE_MODEL,
+                "response_format": "verbose_json", "temperature": "0", "prompt": GROQ_PROMPT}
+        if not translate:
+            data["language"] = language
+        url = GROQ_URL.format(endpoint="translations" if translate else "transcriptions")
+        for attempt in range(self._retries + 1):
+            with open(path, "rb") as fh:
+                resp = self._http.post(url, headers={"Authorization": f"Bearer {self._key}"}, data=data,
+                                       files={"file": (os.path.basename(path), fh, "audio/wav")}, timeout=120)
+            if not self._limits_logged:
+                limits = {k: v for k, v in resp.headers.items() if k.lower().startswith("x-ratelimit")}
+                if limits:
+                    log.info("Groq rate limits: %s", limits)
+                    self._limits_logged = True
+            if resp.status_code == 200:
+                body = resp.json()
+                segments = body.get("segments") or []
+                if segments:
+                    return [(float(seg.get("start", 0.0)), seg.get("text", "")) for seg in segments]
+                return [(0.0, body["text"])] if body.get("text") else []
+            if resp.status_code in (429, 500, 502, 503) and attempt < self._retries:
+                wait = min(60.0, float(resp.headers.get("retry-after") or 2 ** (attempt + 1)))
+                log.warning("Groq HTTP %s for %s; retrying in %.0fs", resp.status_code, os.path.basename(path), wait)
+                time.sleep(wait)
+                continue
+            # Never include the request (it carries the key); the response body is Groq's error message.
+            raise RuntimeError(f"Groq HTTP {resp.status_code}: {resp.text[:300]}")
+        raise RuntimeError("Groq: retries exhausted")
+
+
+def make_transcriber(model_size: str):
+    if use_groq():
+        log.info("transcribing with Groq (%s / %s)", GROQ_TRANSLATE_MODEL, GROQ_TRANSCRIBE_MODEL)
+        return GroqTranscriber()
+    log.info("transcribing locally with faster-whisper %s", model_size)
+    return Transcriber(model_size)
+
+
+def capture_channel(channel: Channel, start: datetime, seconds: int, work_dir: str, transcriber,
                     deadline: datetime | None = None) -> tuple[list[Segment], int]:
     """Record one channel for `seconds`, transcribing each finished chunk.
 
@@ -170,7 +242,7 @@ def capture_channel(channel: Channel, start: datetime, seconds: int, work_dir: s
 def capture_all(channels: list[Channel], start: datetime, seconds: int, work_dir: str, model_size: str,
                 deadline: datetime | None = None) -> dict[str, tuple[list[Segment], int]]:
     """Record and transcribe all channels in parallel; per channel (segments, chunks skipped at the deadline)."""
-    transcriber = Transcriber(model_size)
+    transcriber = make_transcriber(model_size)
     results: dict[str, tuple[list[Segment], int]] = {}
 
     def run(ch: Channel) -> None:
