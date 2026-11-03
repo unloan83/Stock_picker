@@ -127,7 +127,13 @@ market is still open.
    ```bash
    .venv/bin/python -m stock_finder check "Tata Steel, NIFTY 25000 CE"
    ```
-7. To run it permanently on a Linux server, use `deploy/stock-finder.service`.
+7. To keep it answering at any hour, run it on an always-on Ubuntu server (a free cloud VM is enough), not a laptop.
+   One command installs it as a service that starts on boot and restarts itself if it stops:
+   ```bash
+   curl -fsSL https://raw.githubusercontent.com/unloan83/Stock_picker/main/deploy/install.sh | bash
+   ```
+   Run the same command again to update. Logs: `journalctl -u stock-finder -n 50`. Run only one copy of the bot per
+   token: a second copy (e.g. on a laptop) makes Telegram reject both with "Conflict".
 
 ## Tests
 
