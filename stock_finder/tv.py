@@ -47,7 +47,7 @@ TV_ALIASES = {
 # Short symbols that anchors say as words; other symbols under 4 letters are too likely to be ordinary words.
 SHORT_SYMBOLS = {"ITC", "TCS", "HAL", "BEL", "LIC", "PNB", "IOC", "BPCL", "HPCL", "GAIL", "SAIL", "ONGC", "NTPC",
                  "BHEL", "NMDC", "IRFC", "RVNL", "IREDA", "IRCTC", "LT", "ABB", "DLF", "SRF", "UPL", "MRF", "ACC",
-                 "PVR", "TVS"}
+                 "PVR", "TVS", "LTM"}
 # NSE symbols that are also common English or anchor words; never matched as bare symbols.
 STOP_SYMBOLS = {"IDEA", "GOLD", "HOME", "BEST", "TIPS", "MOTOR", "ORIENT", "LINDE", "ALL", "ONE", "CASH", "BANK",
                 "POWER", "PLUS", "GOOD", "GLOBAL", "PRIME", "SMART", "FOCUS", "TODAY", "TREND", "VISION", "UNITY",
@@ -73,7 +73,9 @@ _DEV_DIGITS = str.maketrans("०१२३४५६७८९", "0123456789")
 MAX_PHRASE = 5
 CALL_WINDOW = 25  # tokens after a mention searched for a call word, target or stop
 CALL_LOOKBACK = 6  # tokens before a mention searched for a call word ("buy Tata Steel")
-NUMBER_WINDOW = 5  # tokens after TARGET / STOPLOSS searched for the number
+NUMBER_WINDOW = 7  # tokens either side of TARGET / STOPLOSS searched for its number
+MAX_LEVEL_RATIO = 1.6  # stop loss and target of one call are never further apart than this
+LEVEL_LOOKBACK = 15  # tokens before a mention searched for its target / stop loss ("stop loss 1360 ... buy Cipla")
 # Misheard names ("ICCI bank", "SIPLA") are matched loosely, but only next to a call word and only when capitalised.
 FUZZY_CUTOFF = 0.8
 FUZZY_NEAR = 12  # tokens from a BUY/SELL/TARGET/STOPLOSS word
@@ -145,6 +147,72 @@ def build_index(listing: dict[str, str]) -> NameIndex:
     return index
 
 
+# First letters that speech-to-text confuses ("SIPLA" for Cipla); anything else must start with the same letter.
+_SOUND_ALIKE = [set("CKSQ"), set("IEY"), set("VW"), set("JGZ"), set("FP"), set("OU")]
+
+
+def _same_start(a: str, b: str) -> bool:
+    return a[0] == b[0] or any(a[0] in g and b[0] in g for g in _SOUND_ALIKE)
+
+
+def _close(phrase: str, key: str) -> bool:
+    """Loose match, word by word: every word must start alike and be at least FUZZY_CUTOFF similar."""
+    pw, kw = phrase.split(), key.split()
+    if len(pw) != len(kw):
+        return False
+    return all(a == b or (_same_start(a, b) and difflib.SequenceMatcher(None, a, b).ratio() >= FUZZY_CUTOFF)
+               for a, b in zip(pw, kw, strict=True))
+
+
+def _levels(window: list[str], action: str) -> tuple[float | None, float | None]:
+    """(target, stop loss) from the words around a mention.
+
+    A level's number is looked for after its keyword first (up to the next level keyword), then before it. A number
+    found before its keyword is used only when the call's direction confirms it: a BUY needs stop < target, a SELL
+    stop > target ("42600 as the stop loss, above that 55000 targets"). A stop loss far from the target is a
+    mishearing and is dropped ("stop loss Rs 9", target 790).
+    """
+    level_words = TARGET_WORDS | STOP_WORDS
+
+    def is_num(tok: str) -> bool:
+        return bool(re.fullmatch(r"\d+(?:\.\d+)?", tok)) and float(tok) > 0
+
+    def candidates(words: set[str]) -> list[tuple[float, bool]]:  # (value, found before its keyword)
+        after: list[tuple[int, float]] = []
+        before: list[tuple[int, float]] = []
+        for k, tok in enumerate(window):
+            if tok not in words:
+                continue
+            for j in range(k + 1, min(len(window), k + NUMBER_WINDOW + 1)):
+                if window[j] in level_words:
+                    break
+                if is_num(window[j]):
+                    after.append((j - k, float(window[j])))
+            for j in range(k - 1, max(-1, k - NUMBER_WINDOW - 1), -1):
+                if window[j] in level_words:
+                    break
+                if is_num(window[j]):
+                    before.append((k - j, float(window[j])))
+        return [(v, False) for _, v in sorted(after)] + [(v, True) for _, v in sorted(before)]
+
+    targets, stops = candidates(TARGET_WORDS), candidates(STOP_WORDS)
+    if not targets:
+        first = next((v for v, was_before in stops if not was_before or action != "MENTION"), None)
+        return None, first
+    if not stops:
+        first = next((v for v, was_before in targets if not was_before or action != "MENTION"), None)
+        return first, None
+    for st, st_before in stops:
+        for tg, tg_before in targets:
+            if st == tg or not 1 / MAX_LEVEL_RATIO <= st / tg <= MAX_LEVEL_RATIO:
+                continue
+            if action == "MENTION" and (st_before or tg_before):
+                continue
+            if action == "MENTION" or (st < tg) == (action == "BUY"):
+                return tg, st
+    return next((v for v, was_before in targets if not was_before), None), None
+
+
 def _fuzzy_hits(cased: list[tuple[str, bool]], taken: set[int], index: dict) -> list[tuple[int, int, str]]:
     """Loose matches for capitalised words near a call word that matched nothing exactly."""
     fuzzy = getattr(index, "fuzzy", None)
@@ -167,7 +235,8 @@ def _fuzzy_hits(cased: list[tuple[str, bool]], taken: set[int], index: dict) -> 
             phrase = " ".join(tokens[i:i + n])
             if len(phrase.replace(" ", "")) < FUZZY_MIN_CHARS:
                 continue
-            best = difflib.get_close_matches(phrase, fuzzy, n=2, cutoff=FUZZY_CUTOFF)
+            best = [k for k in difflib.get_close_matches(phrase, fuzzy, n=4, cutoff=FUZZY_CUTOFF)
+                    if _close(phrase, k)][:2]
             # Two different companies about equally close means we cannot tell which was said.
             if best and (len(best) == 1 or fuzzy[best[0]] == fuzzy[best[1]]
                          or difflib.SequenceMatcher(None, phrase, best[0]).ratio()
@@ -191,6 +260,8 @@ def _cased_tokens(text: str) -> list[tuple[str, bool]]:
     text = text.translate(_DEV_DIGITS)
     text = re.sub(r"(?<=\d),(?=\d)", "", text)  # 1,250 -> 1250
     text = re.sub(r"\bstop\s*-?\s*loss\b", "STOPLOSS", text, flags=re.I)
+    # "Short covering" means shorts buying back: market colour, not a sell call.
+    text = re.sub(r"\bshort\s*-?\s*covering\b", "SHORTCOVERING", text, flags=re.I)
     text = re.sub(r"\bM\s*&\s*M\b", "M&M", text, flags=re.I)
     out = []
     for tok in re.findall(r"[A-Za-z0-9&]+(?:\.\d+)?", text):
@@ -232,7 +303,7 @@ def extract_mentions(segment: Segment, index: dict[tuple[str, ...], str]) -> lis
         for n in range(min(MAX_PHRASE, len(tokens) - i), 0, -1):
             sym = index.get(tuple(tokens[i:i + n]))
             # A one-word match written in lower case ("crude", "news") is an ordinary word, not a company name.
-            if sym and not (n == 1 and cased[i][1]):
+            if sym and not (n == 1 and (cased[i][1] or tokens[i] in _NOT_NAMES)):
                 hits.append((i, i + n, sym))
                 i += n
                 break
@@ -248,12 +319,9 @@ def extract_mentions(segment: Segment, index: dict[tuple[str, ...], str]) -> lis
         after = tokens[end:min(next_start, end + CALL_WINDOW)]
         before = tokens[max(prev_end, start - CALL_LOOKBACK):start]
         action = _nearest_call(before, after)
-        target = stop = None
-        for j, tok in enumerate(after):
-            if tok in TARGET_WORDS and target is None:
-                target = _number(after, j + 1)
-            elif tok in STOP_WORDS and stop is None:
-                stop = _number(after, j + 1)
+        # Words before this name count only if they are nearer to it than to the previous name.
+        level_from = max(start - LEVEL_LOOKBACK, prev_end + (start - prev_end + 1) // 2 if k else 0)
+        target, stop = _levels(tokens[level_from:start] + tokens[end:min(next_start, end + CALL_WINDOW)], action)
         snippet = " ".join(tokens[max(0, start - 3):min(len(tokens), end + 15)])
         mentions.append(Mention(segment.channel, segment.at, sym, action, target, stop, snippet))
     return mentions

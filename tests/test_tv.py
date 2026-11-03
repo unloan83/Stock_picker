@@ -267,3 +267,27 @@ def test_transcriber_choice(monkeypatch):
     assert use_groq()
     monkeypatch.setenv("TV_TRANSCRIBER", "local")
     assert not use_groq()
+
+
+def test_real_broadcast_gives_exactly_the_calls_made():
+    """2 Nov 2026, CNBC Awaaz 08:30-09:15, transcribed by Groq; checked by hand against the transcript."""
+    import csv
+    from pathlib import Path
+
+    data = Path(__file__).parent / "data"
+    with open(data / "nse_equity_list.csv", newline="", encoding="utf-8") as fh:
+        listing = {r[0]: r[1] for r in csv.reader(fh) if len(r) == 2}
+    index = build_index(listing)
+    found = [m for seg in read_transcript(str(data / "awaaz_2026-11-02_groq.txt"), "CNBC Awaaz")
+             for m in extract_mentions(seg, index)]
+    calls = {(it.symbol, it.call, it.targets[0] if it.targets else None, it.stops[0] if it.stops else None)
+             for it in shortlist(found, listing) if it.call != "MENTION"}
+    assert calls == {
+        ("GRASIM", "BUY", 3020.0, 2950.0),
+        ("CIPLA", "BUY", 1407.0, 1360.0),
+        ("BOSCHLTD", "BUY", 55000.0, 42600.0),
+        ("ICICIBANK", "BUY", None, 1388.0),
+        ("FORTIS", "BUY", 790.0, None),
+        ("LTM", "BUY", None, None),
+        ("ASTRAL", "SELL", None, None),
+    }
