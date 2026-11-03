@@ -20,10 +20,10 @@ say() { printf '\n== %s\n' "$*"; }
 say "Installing system packages"
 if command -v apt-get >/dev/null; then
     sudo apt-get update -qq
-    sudo apt-get install -y -qq git python3 python3-venv python3-pip >/dev/null
+    sudo apt-get install -y -qq git python3 python3-venv python3-pip curl xz-utils unzip >/dev/null
     PY=python3
 elif command -v dnf >/dev/null; then
-    sudo dnf install -y -q git python3.11 python3.11-pip policycoreutils-python-utils >/dev/null
+    sudo dnf install -y -q git python3.11 python3.11-pip policycoreutils-python-utils curl xz unzip >/dev/null
     PY=python3.11
 else
     echo "Unsupported system: needs apt (Ubuntu/Debian) or dnf (Oracle Linux/RHEL)." >&2
@@ -102,11 +102,69 @@ sudo systemctl enable "$SERVICE" >/dev/null
 sudo systemctl restart "$SERVICE"
 sleep 8
 
+# --- Morning TV shortlist: only when a Groq key is configured ------------------------------------------------------
+TV_STATUS="off (add GROQ_API_KEY to $DIR/.env and run this installer again to enable it)"
+if grep -q '^GROQ_API_KEY=.' .env; then
+    say "Setting up the morning TV shortlist (weekdays 08:29 IST)"
+    .venv/bin/pip install -q -e ".[tv]"
+    mkdir -p bin
+    case "$(uname -m)" in
+        x86_64) FF_ARCH=linux64; DENO_ARCH=x86_64 ;;
+        aarch64|arm64) FF_ARCH=linuxarm64; DENO_ARCH=aarch64 ;;
+        *) echo "Unsupported CPU $(uname -m) for the TV shortlist" >&2; exit 1 ;;
+    esac
+    if ! command -v ffmpeg >/dev/null && [ ! -x bin/ffmpeg ]; then
+        say "Downloading a static ffmpeg build into $DIR/bin"
+        tmp=$(mktemp -d)
+        curl -fsSL "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-${FF_ARCH}-gpl.tar.xz" \
+            -o "$tmp/ff.tar.xz"
+        tar -xJf "$tmp/ff.tar.xz" -C "$tmp"
+        cp "$tmp/ffmpeg-master-latest-${FF_ARCH}-gpl/bin/ffmpeg" bin/ffmpeg
+        rm -rf "$tmp"
+    fi
+    # yt-dlp needs a JavaScript runtime for YouTube.
+    if ! command -v deno >/dev/null && ! command -v node >/dev/null && [ ! -x bin/deno ]; then
+        say "Downloading deno (JavaScript runtime used by yt-dlp for YouTube) into $DIR/bin"
+        tmp=$(mktemp -d)
+        curl -fsSL "https://github.com/denoland/deno/releases/latest/download/deno-${DENO_ARCH}-unknown-linux-gnu.zip" \
+            -o "$tmp/deno.zip"
+        unzip -q -o "$tmp/deno.zip" -d bin
+        rm -rf "$tmp"
+    fi
+    if [ -n "$SELINUX_PRE" ]; then
+        sudo semanage fcontext -a -t bin_t "$DIR/bin(/.*)?" 2>/dev/null \
+            || sudo semanage fcontext -m -t bin_t "$DIR/bin(/.*)?"
+        sudo restorecon -R "$DIR/bin"
+    fi
+    sudo tee /etc/systemd/system/tv-shortlist.service >/dev/null <<UNIT
+[Unit]
+Description=Stock Finder morning TV shortlist
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=$USER
+WorkingDirectory=$DIR
+EnvironmentFile=$SERVICE_ENV
+Environment=PATH=$DIR/bin:$DIR/.venv/bin:/usr/local/bin:/usr/bin:/bin
+${SELINUX_PRE:+ExecStartPre=-+/usr/sbin/restorecon -R $DIR/.venv/bin $DIR/bin}
+ExecStart=$DIR/.venv/bin/python -m stock_finder tv
+TimeoutStartSec=2h
+Nice=5
+UNIT
+    sudo cp deploy/tv-shortlist.timer /etc/systemd/system/tv-shortlist.timer
+    sudo systemctl daemon-reload
+    sudo systemctl enable --now tv-shortlist.timer >/dev/null
+    TV_STATUS="on: next run $(systemctl show tv-shortlist.timer -p NextElapseUSecRealtime --value)"
+fi
+
 if systemctl is-active --quiet "$SERVICE"; then
     say "Running. It starts on boot and restarts itself if it stops."
     echo "Logs:    journalctl -u $SERVICE -n 50"
     echo "Restart: sudo systemctl restart $SERVICE"
     echo "Update:  bash $DIR/deploy/install.sh   (also re-run after editing $DIR/.env)"
+    echo "TV shortlist: $TV_STATUS"
 else
     say "The service did not start. Last log lines:"
     sudo journalctl -u "$SERVICE" -n 30 --no-pager | grep -v "TELEGRAM_BOT_TOKEN" || true

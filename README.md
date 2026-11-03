@@ -117,10 +117,14 @@ Channels: CNBC-TV18, Zee Business
 
 How it works:
 1. `yt-dlp` and `ffmpeg` record each live stream's audio in 2-minute chunks.
-2. Whisper (`faster-whisper`, free, runs offline on the CPU) transcribes each chunk as soon as it is finished. Hindi
-   channels are translated to English so company names come out in Latin script.
-3. Company names and symbols are matched against NSE's equity list. The nearest call word decides the call (buy,
-   accumulate, खरीद → BUY; sell, short, avoid, बेच → SELL), and any target or stop-loss number is read from what follows.
+2. Groq's hosted Whisper (free tier, `GROQ_API_KEY`) transcribes each chunk in a few seconds as soon as it is finished.
+   Hindi channels are translated to English (`whisper-large-v3`) so company names come out in Latin script; English
+   channels are transcribed (`whisper-large-v3-turbo`). The audio is sent to Groq. Without a key, `TV_TRANSCRIBER=local`
+   uses faster-whisper on the server's CPU, which is far too slow for four channels on a small VM.
+3. Company names and symbols are matched against NSE's equity list. Names misheard next to a call word ("ICCI bank",
+   "Cipa") are matched loosely; brokerage names and ordinary words are not. The nearest call word decides the call
+   (buy, accumulate, खरीद → BUY; sell, short, avoid, बेच → SELL; "short covering" is not a call). Target and stop loss
+   may be said before or after the name; a BUY needs stop < target, a SELL stop > target.
 4. Stocks called on more channels rank first. Every mention is stored in the `tv_mentions` table of
    `STOCK_FINDER_DB`, and the transcripts are kept in `TV_DIR/<date>/` for checking.
 5. At 09:15 recording stops. Transcription stops at 09:18; any chunk not done by then is skipped and named in the
@@ -131,29 +135,25 @@ How it works:
 
 `/tv` in the bot shows today's list again, including stocks mentioned without a call.
 
-Setup (on the server, in addition to the bot):
-```bash
-sudo apt install ffmpeg
-```
-```bash
-.venv/bin/pip install -e ".[tv]"
-```
-Then copy `deploy/tv-shortlist.service` and `deploy/tv-shortlist.timer` to `/etc/systemd/system/` and run:
-```bash
-sudo systemctl daemon-reload && sudo systemctl enable --now tv-shortlist.timer
-```
+Setup: add `GROQ_API_KEY=...` to `.env` on the server and run `deploy/install.sh` again. It installs `yt-dlp`, a static
+`ffmpeg` and `deno` (the JavaScript runtime yt-dlp needs for YouTube) into the bot's folder when they are missing, and
+enables the `tv-shortlist.timer` (weekdays 08:29 IST). Check with `systemctl list-timers tv-shortlist.timer` and
+`journalctl -u tv-shortlist -n 50`.
+
 Test it by hand with `.venv/bin/python -m stock_finder tv --minutes 10 --no-send`. To redo a day's list from its saved
 transcripts, run `.venv/bin/python -m stock_finder tv-rebuild 2026-11-02`.
 
+Checked on a real broadcast (CNBC Awaaz, 2 Nov 2026, 08:30-09:15): the list was exactly the seven calls made (Grasim,
+Cipla, Bosch, ICICI Bank, Fortis, LTM BUY; Astral SELL) with their levels; `tests/test_tv.py` keeps it that way.
+
 Limits:
-- Speech-to-text gets some names wrong, especially in Hindi. Check the transcripts during the first weeks.
-- Single words that are also ordinary words are ignored unless capitalised; a few common ones are never matched.
+- Groq's free tier limits audio per hour per model. Hindi and English channels use different models, so the four
+  default channels fit; if Groq refuses a chunk, it is retried and, failing that, named in the message.
+- YouTube may block or challenge some cloud server addresses; the message then says which channels gave no audio.
+- Speech-to-text still gets some names wrong. Check the transcripts during the first weeks.
 - "Don't buy" is not understood as a negative call.
-- Transcription must keep up with four live channels on the CPU. The default `base` model is the fast one; try
-  `TV_WHISPER_MODEL=small` for better accuracy only if the message shows no skipped chunks.
 - If a channel's YouTube handle changes, set `TV_CHANNELS`.
-- `TV_KEEP_AUDIO=1` keeps the recorded WAV chunks (about 2 MB per channel-minute) so a larger model can be tried on
-  the same audio afterwards.
+- `TV_KEEP_AUDIO=1` keeps the recorded WAV chunks (about 2 MB per channel-minute) to re-check them later.
 
 This is a record of what TV said, not a recommendation. It is logged so its value can be measured later.
 

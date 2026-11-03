@@ -1,6 +1,7 @@
 """Record the business channels' YouTube live streams and transcribe them while they record.
 
-Needs the `tv` extra (yt-dlp, faster-whisper) and the system `ffmpeg`. Each channel is recorded in 2-minute audio
+Needs the `tv` extra (yt-dlp), `ffmpeg`, and either GROQ_API_KEY (cloud) or the `tv-local` extra (faster-whisper).
+Each channel is recorded in 2-minute audio
 chunks; finished chunks are transcribed straight away, so the shortlist is ready soon after recording stops.
 Hindi channels are translated to English so company names come out in Latin script.
 """
@@ -69,7 +70,7 @@ def check_tools() -> list[str]:
     try:
         import faster_whisper  # noqa: F401
     except ImportError:
-        missing.append('faster-whisper not installed (pip install -e ".[tv]")')
+        missing.append('no GROQ_API_KEY, and faster-whisper not installed (pip install -e ".[tv-local]")')
     return missing
 
 
