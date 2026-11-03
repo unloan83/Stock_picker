@@ -132,7 +132,7 @@ market is still open.
    ```bash
    curl -fsSL https://raw.githubusercontent.com/unloan83/Stock_picker/main/deploy/install.sh | bash
    ```
-   Run the same command again to update. Logs: `journalctl -u stock-finder -n 50`. Run only one copy of the bot per
+   Run the same command again to update, or after editing `.env`. Logs: `journalctl -u stock-finder -n 50`. Run only one copy of the bot per
    token: a second copy (e.g. on a laptop) makes Telegram reject both with "Conflict".
 
 ## Tests

@@ -12,6 +12,8 @@ set -euo pipefail
 REPO_URL="https://github.com/unloan83/Stock_picker.git"
 DIR="${STOCK_FINDER_DIR:-$HOME/stock_picker}"
 SERVICE=stock-finder
+# systemd reads its own copy of the settings from /etc: under SELinux it may not read files in a home directory.
+SERVICE_ENV="/etc/$SERVICE.env"
 
 say() { printf '\n== %s\n' "$*"; }
 
@@ -71,6 +73,10 @@ if command -v getenforce >/dev/null && [ "$(getenforce)" = "Enforcing" ]; then
     SELINUX_PRE="ExecStartPre=-+/usr/sbin/restorecon -R $DIR/.venv/bin"
 fi
 
+say "Installing the service's copy of the settings ($SERVICE_ENV)"
+sudo install -m 600 -o root -g root .env "$SERVICE_ENV"
+command -v restorecon >/dev/null && sudo restorecon "$SERVICE_ENV" || true
+
 say "Registering the $SERVICE service"
 sudo tee "/etc/systemd/system/$SERVICE.service" >/dev/null <<UNIT
 [Unit]
@@ -82,7 +88,7 @@ Wants=network-online.target
 Type=simple
 User=$USER
 WorkingDirectory=$DIR
-EnvironmentFile=$DIR/.env
+EnvironmentFile=$SERVICE_ENV
 $SELINUX_PRE
 ExecStart=$DIR/.venv/bin/python -m stock_finder bot
 Restart=always
@@ -100,7 +106,7 @@ if systemctl is-active --quiet "$SERVICE"; then
     say "Running. It starts on boot and restarts itself if it stops."
     echo "Logs:    journalctl -u $SERVICE -n 50"
     echo "Restart: sudo systemctl restart $SERVICE"
-    echo "Update:  bash $DIR/deploy/install.sh"
+    echo "Update:  bash $DIR/deploy/install.sh   (also re-run after editing $DIR/.env)"
 else
     say "The service did not start. Last log lines:"
     sudo journalctl -u "$SERVICE" -n 30 --no-pager | grep -v "TELEGRAM_BOT_TOKEN" || true
