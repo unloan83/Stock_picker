@@ -127,7 +127,7 @@ market is still open.
    ```bash
    .venv/bin/python -m stock_finder check "Tata Steel, NIFTY 25000 CE"
    ```
-7. To keep it answering at any hour, run it on an always-on Ubuntu server (a free cloud VM is enough), not a laptop.
+7. To keep it answering at any hour, run it on an always-on server (Ubuntu/Debian or Oracle Linux), not a laptop.
    One command installs it as a service that starts on boot and restarts itself if it stops:
    ```bash
    curl -fsSL https://raw.githubusercontent.com/unloan83/Stock_picker/main/deploy/install.sh | bash
