@@ -103,12 +103,18 @@ market is still open.
 ## Morning website stock names (weekday 09:25 IST)
 
 The website collector uses free, attributed financial-news RSS headlines from Moneycontrol,
-Economic Times, Business Standard, Mint, CNBC-TV18, NDTV Profit and Zee Business,\nplus broker and research portals including Upstox, Dhan, Angel One, 5paisa,\nICICI Direct, Motilal Oswal, Kotak Securities, HDFC Securities and Sharekhan.
+Economic Times, Business Standard, Mint, CNBC-TV18, NDTV Profit and Zee Business,
+plus broker and research portals including Upstox, Dhan, Angel One, 5paisa,
+ICICI Direct, Motilal Oswal, Kotak Securities, HDFC Securities and Sharekhan.
 It collects **NSE stock names only** from articles published on the current IST date,
 including stock watchlists, stock picks, analyst commentary and brokerage roundups.
 Publisher opinions, targets and stop losses are discarded.
 
-The collection target is approximately **20 distinct NSE stocks per trading day**.\nThis is a target, not a guaranteed quota: if fewer names appear in dated, attributed\nheadlines, the bot reports the shortfall without using stale or fabricated fillers.\nTwo topic searches per source are run with bounded concurrency and timeouts.\nNamed stocks are deduplicated, ranked by independent publisher coverage, and
+The collection target is approximately **20 distinct NSE stocks per trading day**.
+This is a target, not a guaranteed quota: if fewer names appear in dated, attributed
+headlines, the bot reports the shortfall without using stale or fabricated fillers.
+Two topic searches per source are run with bounded concurrency and timeouts.
+Named stocks are deduplicated, ranked by independent publisher coverage, and
 up to 25 unique names are passed into the **existing Stock Finder analysis engine**.
 That engine determines LONG TERM / INTRADAY LONG or SHORT / NOT RECOMMENDED
 from its own data and scoring. No article recommendation is copied as a verdict.
