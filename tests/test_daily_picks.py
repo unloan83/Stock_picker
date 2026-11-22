@@ -60,3 +60,17 @@ def test_mock_telegram_send_and_idempotent_delivery(tmp_path, monkeypatch):
     assert sent == [(100001, messages[0], 20), (100001, messages[1], 20)]
     with sqlite3.connect(db) as conn:
         assert conn.execute("SELECT COUNT(*) FROM daily_picks_delivered").fetchone()[0] == 2
+
+
+def test_stock_list_precedes_model_output():
+    from stock_finder.daily_picks import format_stock_list
+    result = format_stock_list(date(2026, 11, 20), ["PAYTM", "INFY", "TCS"])
+    assert result == "📋 Stocks collected · 20 Nov 2026\\n1. PAYTM\\n2. INFY\\n3. TCS"
+    assert "BUY" not in result and "SELL" not in result
+
+
+def test_no_empty_stock_list():
+    import pytest
+    from stock_finder.daily_picks import format_stock_list
+    with pytest.raises(ValueError):
+        format_stock_list(date(2026, 11, 20), [])
