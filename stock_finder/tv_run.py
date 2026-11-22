@@ -135,5 +135,55 @@ def previous_text(day: date, db_path: str, resolver: SymbolResolver) -> str:
     if not mentions:
         return f"No TV shortlist recorded for {day:%d %b %Y}."
     channels = sorted({m.channel for m in mentions})
-    return format_shortlist(shortlist(mentions, resolver.equity_list()), day, channels, include_mentions=True)
+    content = format_shortlist(shortlist(mentions, resolver.equity_list()), day, channels, include_mentions=True)
+    if any("https://news.google.com/" in m.snippet for m in mentions):
+        return (content.replace("📺 TV shortlist", "📰 Website shortlist")
+                .replace("(08:30-09:15)", "(published today)")
+                .replace("Channels:", "Sources:")
+                .replace("What TV said, not a recommendation.",
+                         "Published headline calls only; verify original articles."))
+    return content
 
+
+
+def website_morning(send: bool = True) -> str:
+    """Fetch dated website headlines, retain source evidence and reuse existing verdicts."""
+    from .web_picks import collect
+
+    at = now_ist()
+    day = at.date()
+    resolver = SymbolResolver(os.environ.get("NSE_LIST_CACHE", "nse_equity_list.csv"))
+    listing = resolver.equity_list()
+    if not listing:
+        raise RuntimeError("No NSE equity list; refusing to guess symbols")
+    mentions, checked, failures = collect(day, listing)
+    if not checked:
+        raise RuntimeError("All website sources failed; prior stored picks are untouched")
+    # Failure is visible; no stale recommendations are carried forward.
+    db = os.environ.get("STOCK_FINDER_DB", "stock_finder.db")
+    TvLog(db).replace_day(day, mentions)
+    items = shortlist(mentions, listing)
+    content = format_shortlist(items, day, checked, include_mentions=True)
+    content = (content.replace("📺 TV shortlist", "📰 Website shortlist")
+               .replace("(08:30-09:15)", "(published today)")
+               .replace("Channels:", "Sources:")
+               .replace(" on 1 ch:", " on 1 source:")
+               .replace(" ch:", " sources:")
+               .replace("What TV said, not a recommendation.",
+                        "Published headline calls only; verify each original article before trading."))
+    content += f"\nSources fetched: {len(checked)}/{len(checked) + len(failures)}"
+    if failures:
+        content += "\n⚠️ Source failures: " + ", ".join(failures)
+    if not mentions:
+        content += "\n⚠️ No attributable stock calls found in today's indexed headlines."
+    # Never pass mixed/mention-only calls to the verdict engine.
+    actionable = [item for item in items if item.call in ("BUY", "SELL")]
+    try:
+        replies = verdicts(actionable, FreeMarketData(), resolver, at, db, _chat_ids())
+    except Exception as exc:
+        log.exception("Website verdicts failed")
+        replies = [f"⚠️ Verdicts failed: {type(exc).__name__}"]
+    messages = [content, *replies]
+    if send:
+        send_telegram(messages)
+    return "\n\n".join(messages)

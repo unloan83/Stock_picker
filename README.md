@@ -100,64 +100,34 @@ Only 5-minute bars that start after the call count. A bar that touches both stop
 One week is an early read for long-term calls. ⏳ marks calls that can't be judged yet, for example while the
 market is still open.
 
-## Morning TV shortlist (optional)
+## Morning website picks (weekday 09:25 IST)
 
-Every weekday from 08:30 to 09:15 IST the bot can record four business channels' YouTube live streams (Zee Business,
-CNBC Awaaz, NDTV Profit, CNBC-TV18), transcribe them, and list the stocks that were called BUY or SELL. At 09:15 the
-called stocks go straight into the verdict engine above, and by about 09:20 Telegram gets the shortlist followed by a
-normal verdict reply for each called stock:
+The installed morning job now uses **dated public financial-news RSS headlines**, not YouTube live streams.
+Each query searches publicly indexed headlines from Moneycontrol, Economic Times, Business Standard,
+Mint, CNBC-TV18, NDTV Profit and Zee Business. A publisher's RSS source URL must match the
+approved domain; a headline must have been published **on today's IST date** and explicitly contain
+a stock BUY or SELL call. Mixed-direction roundups, vague commentary, unknown symbols and stale
+articles are excluded. **No article text is inferred or paywall bypassed**; a headline without
+enough detail is not a verified full recommendation.
 
-```
-📺 TV shortlist 02 Nov 2026 (08:30-09:15)
-Channels: CNBC-TV18, Zee Business
-🟢 BHARTIARTL BUY (2B/0S) on 2 ch: CNBC-TV18, Zee Business · target 2050/2100, SL 1950/1960
-🔴 TATAMOTORS SELL (0B/1S) on 1 ch: CNBC-TV18 · target 640
-1 more stock(s) mentioned without a call.
-```
+The job stores attributed calls in the existing `tv_mentions` SQLite table and passes
+unambiguous picks through the existing scoring/verdict and Telegram workflow. `/tv` shows
+the latest daily list. Source headline and link are saved in each mention's `snippet` for
+audit. If all sources fail, the job raises an error without overwriting past records; if
+some sources fail, Telegram includes a warning. Empty current-day results are *not*
+filled with older calls. Article links may be Google News RSS links rather than direct
+publisher URLs.
 
-How it works:
-1. `yt-dlp` and `ffmpeg` record each live stream's audio in 2-minute chunks.
-2. Groq's hosted Whisper (free tier, `GROQ_API_KEY`) transcribes each chunk in a few seconds as soon as it is finished.
-   Hindi channels are translated to English (`whisper-large-v3`) so company names come out in Latin script; English
-   channels are transcribed (`whisper-large-v3-turbo`). The audio is sent to Groq. Without a key, `TV_TRANSCRIBER=local`
-   uses faster-whisper on the server's CPU, which is far too slow for four channels on a small VM.
-3. Company names and symbols are matched against NSE's equity list. Names misheard next to a call word ("ICCI bank",
-   "Cipa") are matched loosely; brokerage names and ordinary words are not. The nearest call word decides the call
-   (buy, accumulate, खरीद → BUY; sell, short, avoid, बेच → SELL; "short covering" is not a call). Target and stop loss
-   may be said before or after the name; a BUY needs stop < target, a SELL stop > target.
-4. Stocks called on more channels rank first. Every mention is stored in the `tv_mentions` table of
-   `STOCK_FINDER_DB`, and the transcripts are kept in `TV_DIR/<date>/` for checking.
-5. At 09:15 recording stops. Transcription stops at 09:18; any chunk not done by then is skipped and named in the
-   message. The stocks called BUY/SELL (up to 25) are then run through the verdict engine. The verdicts are logged like
-   any request, so `/today` and the weekly `/report` include them. The shortlist and the verdicts go to
-   `ALLOWED_CHAT_IDS`. At 09:15-09:20 there are almost no intraday bars yet, so intraday verdicts carry the
-   early-session flag.
+After deployment: `python -m stock_finder web --no-send` verifies collection without
+Telegram; `systemctl list-timers tv-shortlist.timer` checks scheduling and
+`journalctl -u tv-shortlist -n 50` shows source failures. The installer schedules the
+job at 09:25 IST, after morning articles typically appear. It needs only the existing
+Python dependencies and does not need `GROQ_API_KEY`, ffmpeg, yt-dlp, or cookies.
 
-`/tv` in the bot shows today's list again, including stocks mentioned without a call.
-
-Setup: add `GROQ_API_KEY=...` to `.env` on the server and run `deploy/install.sh` again. It installs `yt-dlp`, a static
-`ffmpeg` and `deno` (the JavaScript runtime yt-dlp needs for YouTube) into the bot's folder when they are missing, and
-enables the `tv-shortlist.timer` (weekdays 08:29 IST). Check with `systemctl list-timers tv-shortlist.timer` and
-`journalctl -u tv-shortlist -n 50`.
-
-Test it by hand with `.venv/bin/python -m stock_finder tv --minutes 10 --no-send`. To redo a day's list from its saved
-transcripts, run `.venv/bin/python -m stock_finder tv-rebuild 2026-11-02`.
-
-Checked on a real broadcast (CNBC Awaaz, 2 Nov 2026, 08:30-09:15): the list was exactly the seven calls made (Grasim,
-Cipla, Bosch, ICICI Bank, Fortis, LTM BUY; Astral SELL) with their levels; `tests/test_tv.py` keeps it that way.
-
-Limits:
-- Groq's free tier limits audio per hour per model. Hindi and English channels use different models, so the four
-  default channels fit; if Groq refuses a chunk, it is retried and, failing that, named in the message.
-- YouTube may block or challenge some cloud server addresses; the message then says which channels gave no audio and
-  the log shows yt-dlp's reason (`journalctl -u tv-shortlist`). `TV_YTDLP_COOKIES` (a browser cookies.txt) or
-  `TV_YTDLP_ARGS` (e.g. a proxy) can get past it.
-- Speech-to-text still gets some names wrong. Check the transcripts during the first weeks.
-- "Don't buy" is not understood as a negative call.
-- If a channel's YouTube handle changes, set `TV_CHANNELS`.
-- `TV_KEEP_AUDIO=1` keeps the recorded WAV chunks (about 2 MB per channel-minute) to re-check them later.
-
-This is a record of what TV said, not a recommendation. It is logged so its value can be measured later.
+The older recording pipeline and `python -m stock_finder tv` remain available for
+historical comparison, but the scheduled morning job no longer invokes them.
+This is **a source-attributed news-mention shortlist, not trading advice**; measure
+selection quality over time before using any call for trading.
 
 ## Data (free)
 

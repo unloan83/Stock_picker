@@ -3,7 +3,7 @@
     python -m stock_finder bot                         # run the Telegram bot
     python -m stock_finder check "Tata Steel, NIFTY 25000 CE"   # one-off analysis in the terminal
     python -m stock_finder tv [--minutes N] [--no-send]   # record TV until 09:15 IST, build the shortlist
-    python -m stock_finder tv-rebuild [YYYY-MM-DD]        # rebuild a day's shortlist from saved transcripts
+    python -m stock_finder web                         # daily published website picks\n    python -m stock_finder tv-rebuild [YYYY-MM-DD]        # rebuild a day's shortlist from saved transcripts
 """
 
 import sys
@@ -11,7 +11,7 @@ import sys
 
 def main() -> None:
     args = sys.argv[1:]
-    if not args or args[0] not in {"bot", "check", "tv", "tv-rebuild"}:
+    if not args or args[0] not in {"bot", "check", "tv", "web", "tv-rebuild"}:
         print(__doc__)
         raise SystemExit(2)
     if args[0] == "bot":
@@ -19,7 +19,7 @@ def main() -> None:
 
         run()
         return
-    if args[0] in {"tv", "tv-rebuild"}:
+    if args[0] in {"tv", "web", "tv-rebuild"}:
         _tv(args)
         return
 
@@ -46,7 +46,7 @@ def _tv(args: list[str]) -> None:
     from .tv_run import build_from_transcripts, morning
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
-    if args[0] == "tv":
+    if args[0] == "web":\n        from .tv_run import website_morning\n        print(website_morning(send="--no-send" not in args))\n        return\n    if args[0] == "tv":
         minutes = float(args[args.index("--minutes") + 1]) if "--minutes" in args else None
         print(morning(minutes, send="--no-send" not in args))
         return
