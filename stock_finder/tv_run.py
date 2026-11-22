@@ -135,16 +135,26 @@ def previous_text(day: date, db_path: str, resolver: SymbolResolver) -> str:
     if not mentions:
         return f"No TV shortlist recorded for {day:%d %b %Y}."
     channels = sorted({m.channel for m in mentions})
-    content = format_shortlist(shortlist(mentions, resolver.equity_list()), day, channels, include_mentions=True)
     if any("https://news.google.com/" in m.snippet for m in mentions):
-        return (content.replace("📺 TV shortlist", "📰 Website shortlist")
-                .replace("(08:30-09:15)", "(published today)")
-                .replace("Channels:", "Sources:")
-                .replace("What TV said, not a recommendation.",
-                         "Published headline calls only; verify original articles."))
+        return website_list(shortlist(mentions, resolver.equity_list()), day, channels)
+    content = format_shortlist(shortlist(mentions, resolver.equity_list()), day, channels,
+                               include_mentions=True)
     return content
 
 
+
+
+def website_list(items: list[ShortlistItem], day: date, sources: list[str]) -> str:
+    """Name-only discovery report; never conveys the publisher's recommendation as ours."""
+    lines = [f"📰 Daily website stock names · {day:%d %b %Y}",
+             f"Sources: {', '.join(sources) or 'none'}",
+             f"Unique stocks: {len(items)}"]
+    for i, item in enumerate(items[:MAX_VERDICTS], 1):
+        lines.append(f"{i}. {item.symbol} ({item.name}) · {len(item.channels)} source(s)")
+    if len(items) > MAX_VERDICTS:
+        lines.append(f"{len(items) - MAX_VERDICTS} more names not analysed (25-stock cap).")
+    lines.append("Names sourced from headlines; verdicts below are from Stock Finder.")
+    return "\\n".join(lines)
 
 def website_morning(send: bool = True) -> str:
     """Fetch dated website headlines, retain source evidence and reuse existing verdicts."""
@@ -163,23 +173,22 @@ def website_morning(send: bool = True) -> str:
     db = os.environ.get("STOCK_FINDER_DB", "stock_finder.db")
     TvLog(db).replace_day(day, mentions)
     items = shortlist(mentions, listing)
-    content = format_shortlist(items, day, checked, include_mentions=True)
-    content = (content.replace("📺 TV shortlist", "📰 Website shortlist")
-               .replace("(08:30-09:15)", "(published today)")
-               .replace("Channels:", "Sources:")
-               .replace(" on 1 ch:", " on 1 source:")
-               .replace(" ch:", " sources:")
-               .replace("What TV said, not a recommendation.",
-                        "Published headline calls only; verify each original article before trading."))
-    content += f"\nSources fetched: {len(checked)}/{len(checked) + len(failures)}"
+    content = website_list(items, day, checked)
+    content += f"\\nSources fetched: {len(checked)}/{len(checked) + len(failures)}"
     if failures:
-        content += "\n⚠️ Source failures: " + ", ".join(failures)
+        content += "\\n⚠️ Source failures: " + ", ".join(failures)
     if not mentions:
-        content += "\n⚠️ No attributable stock calls found in today's indexed headlines."
-    # Never pass mixed/mention-only calls to the verdict engine.
-    actionable = [item for item in items if item.call in ("BUY", "SELL")]
+        content += "\\n⚠️ No named NSE stocks found in today's indexed headlines."
+    # All sourced names (regardless of publisher's opinion) are scored independently.
+    actionable = items[:MAX_VERDICTS]
     try:
-        replies = verdicts(actionable, FreeMarketData(), resolver, at, db, _chat_ids())
+        # 'verdicts' normally filters TV BUY/SELL calls; names-only use is explicit here.
+        reports = analyse_all(FreeMarketData(), resolver,
+                              [StockRequest(item.symbol) for item in actionable], at.date())
+        rec_log = RecommendationLog(db)
+        for chat_id in _chat_ids() or [None]:
+            rec_log.record(at, chat_id, reports)
+        replies = format_reply(reports, [], at)
     except Exception as exc:
         log.exception("Website verdicts failed")
         replies = [f"⚠️ Verdicts failed: {type(exc).__name__}"]
