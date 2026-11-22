@@ -100,34 +100,29 @@ Only 5-minute bars that start after the call count. A bar that touches both stop
 One week is an early read for long-term calls. ⏳ marks calls that can't be judged yet, for example while the
 market is still open.
 
-## Morning website picks (weekday 09:25 IST)
+## Morning website stock names (weekday 09:25 IST)
 
-The installed morning job now uses **dated public financial-news RSS headlines**, not YouTube live streams.
-Each query searches publicly indexed headlines from Moneycontrol, Economic Times, Business Standard,
-Mint, CNBC-TV18, NDTV Profit and Zee Business. A publisher's RSS source URL must match the
-approved domain; a headline must have been published **on today's IST date** and explicitly contain
-a stock BUY or SELL call. Mixed-direction roundups, vague commentary, unknown symbols and stale
-articles are excluded. **No article text is inferred or paywall bypassed**; a headline without
-enough detail is not a verified full recommendation.
+The website collector uses free, attributed financial-news RSS headlines from Moneycontrol,
+Economic Times, Business Standard, Mint, CNBC-TV18, NDTV Profit and Zee Business.
+It collects **NSE stock names only** from articles published on the current IST date,
+including "stocks to watch", "stock picks", and "stocks to buy" roundups.
+Publisher opinions, targets and stop losses are discarded.
 
-The job stores attributed calls in the existing `tv_mentions` SQLite table and passes
-unambiguous picks through the existing scoring/verdict and Telegram workflow. `/tv` shows
-the latest daily list. Source headline and link are saved in each mention's `snippet` for
-audit. If all sources fail, the job raises an error without overwriting past records; if
-some sources fail, Telegram includes a warning. Empty current-day results are *not*
-filled with older calls. Article links may be Google News RSS links rather than direct
-publisher URLs.
+Named stocks are deduplicated, ranked by independent publisher coverage, and
+up to 25 unique names are passed into the **existing Stock Finder analysis engine**.
+That engine determines LONG TERM / INTRADAY LONG or SHORT / NOT RECOMMENDED
+from its own data and scoring. No article recommendation is copied as a verdict.
 
-After deployment: `python -m stock_finder web --no-send` verifies collection without
-Telegram; `systemctl list-timers tv-shortlist.timer` checks scheduling and
-`journalctl -u tv-shortlist -n 50` shows source failures. The installer schedules the
-job at 09:25 IST, after morning articles typically appear. It needs only the existing
-Python dependencies and does not need `GROQ_API_KEY`, ffmpeg, yt-dlp, or cookies.
+Attribution, headline and article link are stored in the existing SQLite mention
+log; the /tv command shows the latest name shortlist. Source failures are
+reported; stale headlines are rejected. The job does not run when all sources
+fail. Website coverage may be incomplete: RSS indexing does not guarantee all
+today's articles or names are returned.
 
-The older recording pipeline and `python -m stock_finder tv` remain available for
-historical comparison, but the scheduled morning job no longer invokes them.
-This is **a source-attributed news-mention shortlist, not trading advice**; measure
-selection quality over time before using any call for trading.
+Run manually: `.venv/bin/python -m stock_finder web --no-send`.
+Scheduled service: `journalctl -u tv-shortlist -n 50`.
+No yt-dlp, audio transcription, Groq key or paid API is required.
+The legacy `tv` recording command remains available manually but is not scheduled.
 
 ## Data (free)
 
