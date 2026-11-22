@@ -148,13 +148,13 @@ def website_list(items: list[ShortlistItem], day: date, sources: list[str]) -> s
     """Name-only discovery report; never conveys the publisher's recommendation as ours."""
     lines = [f"📰 Daily website stock names · {day:%d %b %Y}",
              f"Sources: {', '.join(sources) or 'none'}",
-             f"Unique stocks: {len(items)}"]
+             f"Unique stocks: {len(items)} · target: ~20"]
     for i, item in enumerate(items[:MAX_VERDICTS], 1):
         lines.append(f"{i}. {item.symbol} ({item.name}) · {len(item.channels)} source(s)")
     if len(items) > MAX_VERDICTS:
         lines.append(f"{len(items) - MAX_VERDICTS} more names not analysed (25-stock cap).")
     lines.append("Names sourced from headlines; verdicts below are from Stock Finder.")
-    return "\\n".join(lines)
+    return "\n".join(lines)
 
 def website_morning(send: bool = True) -> str:
     """Fetch dated website headlines, retain source evidence and reuse existing verdicts."""
@@ -174,13 +174,15 @@ def website_morning(send: bool = True) -> str:
     TvLog(db).replace_day(day, mentions)
     items = shortlist(mentions, listing)
     content = website_list(items, day, checked)
-    content += f"\\nSources fetched: {len(checked)}/{len(checked) + len(failures)}"
+    content += f"\nSources fetched: {len(checked)}/{len(checked) + len(failures)}"
     if failures:
-        content += "\\n⚠️ Source failures: " + ", ".join(failures)
+        content += "\n⚠️ Source failures: " + ", ".join(failures)
     if not mentions:
-        content += "\\n⚠️ No named NSE stocks found in today's indexed headlines."
+        content += "\n⚠️ No named NSE stocks found in today's indexed headlines."
     # All sourced names (regardless of publisher's opinion) are scored independently.
     actionable = items[:MAX_VERDICTS]
+    if len(items) < 20:
+        content += f"\n⚠️ Only {len(items)} names identified; no fabricated or stale fillers."
     try:
         # 'verdicts' normally filters TV BUY/SELL calls; names-only use is explicit here.
         reports = analyse_all(FreeMarketData(), resolver,
