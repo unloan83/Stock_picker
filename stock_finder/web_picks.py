@@ -3,6 +3,7 @@
 News is a discovery mechanism only; the independent analysis engine issues verdicts.
 """
 import logging
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date
 from email.utils import parsedate_to_datetime
 from urllib.parse import urlencode, urlparse
@@ -24,8 +25,21 @@ SOURCES = {
     "cnbctv18.com": "CNBC-TV18",
     "ndtvprofit.com": "NDTV Profit",
     "zeebiz.com": "Zee Business",
+    "upstox.com": "Upstox",
+    "dhan.co": "Dhan",
+    "angelone.in": "Angel One",
+    "5paisa.com": "5paisa",
+    "icicidirect.com": "ICICI Direct",
+    "motilaloswal.com": "Motilal Oswal",
+    "kotaksecurities.com": "Kotak Securities",
+    "hdfcsec.com": "HDFC Securities",
+    "sharekhan.com": "Sharekhan",
 }
-_MAX_ITEMS = 30
+_MAX_ITEMS = 60
+_SEARCHES = (
+    '"stocks to buy" OR "stock picks" OR "analyst recommends"',
+    '"stocks to watch" OR "stocks in focus" OR "brokerage"',
+)
 
 
 def _publisher(item: ET.Element, expected_host: str) -> str | None:
@@ -72,24 +86,41 @@ def parse_feed(xml: bytes | str, day: date, listing: dict[str, str], expected_ho
     return result
 
 
+def _source_query(host: str, terms: str) -> str:
+    return "https://news.google.com/rss/search?" + urlencode({
+        "q": f"({terms}) site:{host} when:2d",
+        "hl": "en-IN", "gl": "IN", "ceid": "IN:en",
+    })
+
+
+def _fetch_source(http, day: date, listing: dict[str, str], host: str, terms: str):
+    response = http.get(_source_query(host, terms),
+                        headers={"User-Agent": "StockFinder/1.0"}, timeout=(5, 12))
+    response.raise_for_status()
+    return parse_feed(response.content, day, listing, host)
+
+
 def collect(day: date, listing: dict[str, str], session=None) -> tuple[list[Mention], list[str], list[str]]:
-    """Independently collect named tickers; source failures remain visible."""
+    """Find current-day stock names without silently padding unavailable picks."""
     http = session or requests
     mentions: list[Mention] = []
-    succeeded: list[str] = []
-    failures: list[str] = []
-    for host, label in SOURCES.items():
-        query = f'("stocks to buy" OR "stocks to watch" OR "stock picks" OR "stock recommendations") site:{host} when:2d'
-        url = "https://news.google.com/rss/search?" + urlencode({
-            "q": query, "hl": "en-IN", "gl": "IN", "ceid": "IN:en",
-        })
-        try:
-            response = http.get(url, headers={"User-Agent": "StockFinder/1.0"},
-                                timeout=(5, 12))
-            response.raise_for_status()
-            mentions.extend(parse_feed(response.content, day, listing, host))
-            succeeded.append(label)
-        except (requests.RequestException, ET.ParseError, ValueError) as exc:
-            failures.append(label)
-            log.warning("Daily picks source %s unavailable: %s", label, type(exc).__name__)
-    return mentions, succeeded, failures
+    succeeded: set[str] = set()
+    with ThreadPoolExecutor(max_workers=6) as pool:
+        jobs = {
+            pool.submit(_fetch_source, http, day, listing, host, terms): host
+            for host in SOURCES for terms in _SEARCHES
+        }
+        for job in as_completed(jobs):
+            host = jobs[job]
+            try:
+                mentions.extend(job.result())
+                succeeded.add(host)
+            except (requests.RequestException, ET.ParseError, ValueError) as exc:
+                log.warning("Daily source %s failed: %s", SOURCES[host], type(exc).__name__)
+    unique: dict[tuple[str, str, str], Mention] = {}
+    for mention in mentions:
+        unique[(mention.channel, mention.symbol, mention.snippet)] = mention
+    checked = [name for host, name in SOURCES.items() if host in succeeded]
+    failed = [name for host, name in SOURCES.items() if host not in succeeded]
+    ordered = sorted(unique.values(), key=lambda m: (m.at, m.channel, m.symbol))
+    return ordered, checked, failed
