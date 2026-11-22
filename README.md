@@ -100,35 +100,35 @@ Only 5-minute bars that start after the call count. A bar that touches both stop
 One week is an early read for long-term calls. ⏳ marks calls that can't be judged yet, for example while the
 market is still open.
 
-## Morning website stock names (weekday 09:25 IST)
+## Weekday stock discovery and independent recommendations
 
-The website collector uses free, attributed financial-news RSS headlines from Moneycontrol,
-Economic Times, Business Standard, Mint, CNBC-TV18, NDTV Profit and Zee Business,
-plus broker and research portals including Upstox, Dhan, Angel One, 5paisa,
-ICICI Direct, Motilal Oswal, Kotak Securities, HDFC Securities and Sharekhan.
-It collects **NSE stock names only** from articles published on the current IST date,
-including stock watchlists, stock picks, analyst commentary and brokerage roundups.
-Publisher opinions, targets and stop losses are discarded.
+At **09:25 IST** on weekdays, the system begins querying recent, dated public
+headlines from 16 financial-news, broker and research websites. Only current-day
+NSE stock **names** enter the model. Broker/analyst BUY/SELL opinions, prices,
+targets, stop losses and articles are not forwarded as recommendations.
+Duplicates are removed and stocks are ranked by independent source coverage.
+The target is around 20 unique stocks; at most 25 are analysed, and missing
+names are never fabricated or filled with previous-day stocks.
 
-The collection target is approximately **20 distinct NSE stocks per trading day**.
-This is a target, not a guaranteed quota: if fewer names appear in dated, attributed
-headlines, the bot reports the shortfall without using stale or fabricated fillers.
-Two topic searches per source are run with bounded concurrency and timeouts.
-Named stocks are deduplicated, ranked by independent publisher coverage, and
-up to 25 unique names are passed into the **existing Stock Finder analysis engine**.
-That engine determines LONG TERM / INTRADAY LONG or SHORT / NOT RECOMMENDED
-from its own data and scoring. No article recommendation is copied as a verdict.
+The existing stock analysis engine produces all verdicts. **Telegram gets the
+normal Stock Finder recommendation messages**, not a separate source shortlist.
+The existing SQLite recommendation log records analysed stocks. `/picks`
+shows only the discovered symbols on demand. Telegram send retries are
+deduplicated per date/chat/message, and repeated scheduled processing avoids
+duplicate recommendation records.
 
-Attribution, headline and article link are stored in the existing SQLite mention
-log; the /tv command shows the latest name shortlist. Source failures are
-reported; stale headlines are rejected. The job does not run when all sources
-fail. Website coverage may be incomplete: RSS indexing does not guarantee all
-today's articles or names are returned.
+The 09:25 timer is a **start time**, not a promised Telegram delivery time.
+Intraday data is often incomplete this early; the existing scoring engine
+continues to flag missing or insufficient market data. The source search uses
+public Google News RSS discovery, not publisher APIs; actual coverage and
+daily count depend on RSS index availability and must be checked on OCI.
 
-Run manually: `.venv/bin/python -m stock_finder web --no-send`.
-Scheduled service: `journalctl -u tv-shortlist -n 50`.
-No yt-dlp, audio transcription, Groq key or paid API is required.
-The legacy `tv` recording command remains available manually but is not scheduled.
+Dry run (no Telegram or recommendation DB writes):
+```bash
+.venv/bin/python -m stock_finder web --no-send
+```
+Live logs: `journalctl -u stock-picks -n 60 --no-pager`.
+There are no YouTube, yt-dlp, Groq, audio-capture or transcription dependencies.
 
 ## Data (free)
 

@@ -17,10 +17,6 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=8.0", "ruff>=0.5"]
-# Morning TV shortlist (also needs the system ffmpeg)
-tv = ["yt-dlp[default]>=2025.1.15"]  # [default] adds the YouTube JavaScript solver; deno runs it
-# Transcribe on this machine instead of Groq (slow on small CPUs; see README)
-tv-local = ["faster-whisper>=1.1"]
 
 [tool.setuptools.packages.find]
 include = ["stock_finder*"]

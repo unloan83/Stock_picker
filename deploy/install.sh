@@ -102,11 +102,11 @@ sudo systemctl enable "$SERVICE" >/dev/null
 sudo systemctl restart "$SERVICE"
 sleep 8
 
-# --- Website-based morning shortlist: no YouTube, ffmpeg, Whisper or paid API ---
-say "Setting up website daily picks (weekdays 09:25 IST)"
-sudo tee /etc/systemd/system/tv-shortlist.service >/dev/null <<UNIT
+# --- Website-only daily analysis and existing Telegram recommendation format ---
+say "Installing daily stock picks timer for 09:25 IST"
+sudo tee /etc/systemd/system/stock-picks.service >/dev/null <<UNIT
 [Unit]
-Description=Stock Finder published website picks
+Description=Stock Finder website-name collection and model recommendations
 After=network-online.target
 Wants=network-online.target
 
@@ -116,19 +116,23 @@ User=$USER
 WorkingDirectory=$DIR
 EnvironmentFile=$SERVICE_ENV
 ExecStart=$DIR/.venv/bin/python -m stock_finder web
-TimeoutStartSec=5min
+TimeoutStartSec=8min
 UNIT
-sudo cp deploy/tv-shortlist.timer /etc/systemd/system/tv-shortlist.timer
+sudo cp deploy/stock-picks.timer /etc/systemd/system/stock-picks.timer
+# The legacy YouTube timer and service are removed, without touching database files.
+sudo systemctl disable --now tv-shortlist.timer 2>/dev/null || true
+sudo systemctl stop tv-shortlist.service 2>/dev/null || true
+sudo rm -f /etc/systemd/system/tv-shortlist.timer /etc/systemd/system/tv-shortlist.service
 sudo systemctl daemon-reload
-sudo systemctl enable --now tv-shortlist.timer >/dev/null
-TV_STATUS="website picks on: next run $(systemctl show tv-shortlist.timer -p NextElapseUSecRealtime --value)"
+sudo systemctl enable --now stock-picks.timer >/dev/null
+TV_STATUS="stock picks on: $(systemctl show stock-picks.timer -p NextElapseUSecRealtime --value)"
 
 if systemctl is-active --quiet "$SERVICE"; then
     say "Running. It starts on boot and restarts itself if it stops."
     echo "Logs:    journalctl -u $SERVICE -n 50"
     echo "Restart: sudo systemctl restart $SERVICE"
     echo "Update:  bash $DIR/deploy/install.sh   (also re-run after editing $DIR/.env)"
-    echo "TV shortlist: $TV_STATUS"
+    echo "Daily picks: $TV_STATUS"
 else
     say "The service did not start. Last log lines:"
     sudo journalctl -u "$SERVICE" -n 30 --no-pager | grep -v "TELEGRAM_BOT_TOKEN" || true

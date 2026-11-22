@@ -12,7 +12,7 @@ from xml.etree import ElementTree as ET
 import requests
 
 from .engine import IST
-from .tv import Mention, Segment, build_index, extract_mentions
+from .mentions import Mention, Segment, build_index, extract_mentions
 
 log = logging.getLogger(__name__)
 

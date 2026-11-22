@@ -1,10 +1,7 @@
-"""Morning TV shortlist: find the stocks named on business TV and whether they were called BUY or SELL.
+"""Extract NSE company mentions from headlines and retain attribution in SQLite.
 
-Input is transcript text (see `tv_capture.py` for recording and transcribing the live streams). Hindi channels are
-translated to English by Whisper, but Devanagari call words that survive (खरीद, बेच, टारगेट, स्टॉप लॉस) are mapped too.
-
-The shortlist is a record of what was said, not a recommendation. Its value is unknown until enough days are logged
-and checked against prices.
+The existing tv_mentions SQL table name is preserved for backward data compatibility.
+No video recording or transcription is performed by this module.
 """
 
 import difflib
@@ -421,20 +418,3 @@ class TvLog:
                 for ts, ch, sym, act, tgt, sl, snip in rows]
 
 
-# --- transcript files ---------------------------------------------------------------------------------------------
-
-def write_transcript(path: str, segments: list[Segment]) -> None:
-    with open(path, "w", encoding="utf-8") as fh:
-        for s in segments:
-            fh.write(f"{s.at.isoformat()}\t{s.text.strip()}\n")
-
-
-def read_transcript(path: str, channel: str) -> list[Segment]:
-    """Lines of "ISO-timestamp<TAB>text", as written by `write_transcript`."""
-    out = []
-    with open(path, encoding="utf-8") as fh:
-        for line in fh:
-            ts, _, text = line.rstrip("\n").partition("\t")
-            if text:
-                out.append(Segment(channel, datetime.fromisoformat(ts), text))
-    return out

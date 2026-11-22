@@ -1,5 +1,5 @@
 [Unit]
-Description=Collect published daily website stock picks on weekdays at 09:25 IST
+Description=Daily website stock discovery and Stock Finder recommendations, 09:25 IST
 
 [Timer]
 OnCalendar=Mon..Fri *-*-* 09:25:00 Asia/Kolkata
