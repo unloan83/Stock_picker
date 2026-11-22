@@ -37,3 +37,17 @@ def test_wrong_source_and_stale_date_rejected():
 def test_no_names_means_no_candidate():
     assert not parse_feed(feed(title="Markets rise on global sentiment"),
                           date(2026, 11, 2), LISTING, "moneycontrol.com")
+
+def test_broker_publisher_name_only():
+    rss = feed(source="https://upstox.com", title="Stocks to watch today: Tata Steel")
+    picks = parse_feed(rss, date(2026, 11, 2), LISTING, "upstox.com")
+    assert [(p.symbol, p.action) for p in picks] == [("TATASTEEL", "MENTION")]
+
+
+def test_sources_include_brokers_and_analyst_search_terms():
+    from stock_finder.web_picks import SOURCES, _SEARCHES, _source_query
+    assert "upstox.com" in SOURCES
+    assert "dhan.co" in SOURCES
+    assert "motilaloswal.com" in SOURCES
+    assert any("analyst" in term for term in _SEARCHES)
+    assert "site%3Adhan.co" in _source_query("dhan.co", _SEARCHES[0])
