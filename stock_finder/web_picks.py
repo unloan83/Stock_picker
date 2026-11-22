@@ -1,12 +1,9 @@
-"""Conservative daily stock calls from dated, attributed financial-news RSS headlines.
+"""Extract NSE stock names from dated, attributed Indian financial-news headlines.
 
-No page scraping, no generative inference, and no trading on ambiguous prose.
-RSS feeds are discovery only: extraction is restricted to the published headline.
+News is a discovery mechanism only; the independent analysis engine issues verdicts.
 """
 import logging
-import os
-import re
-from datetime import date, datetime
+from datetime import date
 from email.utils import parsedate_to_datetime
 from urllib.parse import urlencode, urlparse
 from xml.etree import ElementTree as ET
@@ -28,8 +25,6 @@ SOURCES = {
     "ndtvprofit.com": "NDTV Profit",
     "zeebiz.com": "Zee Business",
 }
-_CALL_BUY = re.compile(r"\b(?:stocks? to buy|buy (?:call|rating|recommendation)|buy these stocks|top buys?)\b", re.I)
-_CALL_SELL = re.compile(r"\b(?:stocks? to sell|sell (?:call|rating|recommendation)|stocks? to avoid)\b", re.I)
 _MAX_ITEMS = 30
 
 
@@ -44,7 +39,7 @@ def _publisher(item: ET.Element, expected_host: str) -> str | None:
 
 
 def parse_feed(xml: bytes | str, day: date, listing: dict[str, str], expected_host: str) -> list[Mention]:
-    """Only same-IST-day, source-verified, explicit stock calls survive."""
+    """Return named NSE securities from same-day, attributed headlines, without inferring direction."""
     index = build_index(listing)
     result: list[Mention] = []
     seen: set[tuple[str, str, str]] = set()
@@ -65,34 +60,26 @@ def parse_feed(xml: bytes | str, day: date, listing: dict[str, str], expected_ho
             continue
         # Google News adds " - Publisher" to the end of a title.
         headline = title.rsplit(" - ", 1)[0].strip()
-        has_buy, has_sell = bool(_CALL_BUY.search(headline)), bool(_CALL_SELL.search(headline))
-        if not (has_buy or has_sell):
-            continue
-        if has_buy and has_sell:
-            continue  # mixed-direction roundups cannot safely label each ticker
         for mention in extract_mentions(Segment(name, published, headline), index):
-            # A headline about a stock can contain a general market verb without an actual call.
-            # Retain only headlines whose explicit headline-level recommendation is unambiguous.
-            direction = "BUY" if has_buy else "SELL"
-            if mention.action not in ("MENTION", direction):
-                continue
             key = (name, link, mention.symbol)
             if key in seen:
                 continue
             seen.add(key)
-            result.append(Mention(name, published, mention.symbol, direction,
-                                  mention.target, mention.stop, f"{headline} | {link}"))
+            # Deliberately ignore any journalist/broker recommendation and numeric levels.
+            # The existing analysis engine determines its own verdict from market data.
+            result.append(Mention(name, published, mention.symbol, "MENTION",
+                                  snippet=f"{headline} | {link}"))
     return result
 
 
 def collect(day: date, listing: dict[str, str], session=None) -> tuple[list[Mention], list[str], list[str]]:
-    """Independent source failures are reported, never silently treated as no recommendations."""
+    """Independently collect named tickers; source failures remain visible."""
     http = session or requests
     mentions: list[Mention] = []
     succeeded: list[str] = []
     failures: list[str] = []
     for host, label in SOURCES.items():
-        query = f'("stocks to buy" OR "stocks to sell" OR "stock recommendations") site:{host} when:2d'
+        query = f'("stocks to buy" OR "stocks to watch" OR "stock picks" OR "stock recommendations") site:{host} when:2d'
         url = "https://news.google.com/rss/search?" + urlencode({
             "q": query, "hl": "en-IN", "gl": "IN", "ceid": "IN:en",
         })
