@@ -88,7 +88,7 @@ def parse_feed(xml: bytes | str, day: date, listing: dict[str, str], expected_ho
 
 def _source_query(host: str, terms: str) -> str:
     return "https://news.google.com/rss/search?" + urlencode({
-        "q": f"({terms}) site:{host} when:2d",
+        "q": f"({terms}) site:{host} when:7d",
         "hl": "en-IN", "gl": "IN", "ceid": "IN:en",
     })
 
