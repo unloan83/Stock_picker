@@ -29,3 +29,34 @@ def test_names_only_on_demand(tmp_path):
     resolver = SymbolResolver(None, list_loader=lambda: {"TATASTEEL": "Tata Steel Limited"},
                               searcher=lambda q: [])
     assert previous_text(day, database, resolver) == "TATASTEEL"
+
+def test_mock_telegram_send_and_idempotent_delivery(tmp_path, monkeypatch):
+    """Real delivery code and SQLite acknowledgements, fake HTTP transport."""
+    import sqlite3
+    from stock_finder import daily_picks
+
+    db = str(tmp_path / "delivery.db")
+    sent = []
+
+    class Response:
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {"ok": True}
+
+    def fake_post(url, json, timeout):
+        sent.append((json["chat_id"], json["text"], timeout))
+        return Response()
+
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "MOCK_TOKEN")
+    monkeypatch.setenv("ALLOWED_CHAT_IDS", "100001")
+    monkeypatch.setattr(daily_picks.requests, "post", fake_post)
+
+    day = date(2026, 11, 20)
+    messages = ["Mock live report: TATASTEEL LONG TERM", "Mock live report: INFY INTRADAY SHORT"]
+    daily_picks._deliver(messages, day, db)
+    daily_picks._deliver(messages, day, db)
+    assert sent == [(100001, messages[0], 20), (100001, messages[1], 20)]
+    with sqlite3.connect(db) as conn:
+        assert conn.execute("SELECT COUNT(*) FROM daily_picks_delivered").fetchone()[0] == 2
