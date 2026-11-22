@@ -4,6 +4,7 @@ No YouTube capture and no publisher recommendation is used. The Telegram output
 is the existing bot's model verdict format; news sources contribute names only.
 """
 import fcntl
+import json
 import logging
 import os
 import sqlite3
@@ -31,6 +32,27 @@ CREATE TABLE IF NOT EXISTS daily_picks_delivered (
     PRIMARY KEY(day, chat_id, part)
 )"""
 
+
+
+REPORT_SCHEMA = """
+CREATE TABLE IF NOT EXISTS daily_picks_snapshot (
+    day TEXT PRIMARY KEY, messages TEXT NOT NULL
+)"""
+
+
+def _saved_report(day: date, db_path: str) -> list[str] | None:
+    with sqlite3.connect(db_path) as db:
+        db.execute(REPORT_SCHEMA)
+        row = db.execute("SELECT messages FROM daily_picks_snapshot WHERE day=?",
+                         (day.isoformat(),)).fetchone()
+    return json.loads(row[0]) if row else None
+
+
+def _save_report(day: date, db_path: str, messages: list[str]) -> None:
+    with sqlite3.connect(db_path) as db:
+        db.execute(REPORT_SCHEMA)
+        db.execute("INSERT OR IGNORE INTO daily_picks_snapshot (day, messages) VALUES (?, ?)",
+                   (day.isoformat(), json.dumps(messages, ensure_ascii=False)))
 
 def _chat_ids() -> list[int]:
     return sorted({int(v) for v in os.environ.get("ALLOWED_CHAT_IDS", "").replace(" ", "").split(",") if v})
@@ -97,6 +119,13 @@ def run(send: bool = True) -> str:
         raise RuntimeError("NSE equity list missing; refusing unverified names")
 
     with _single_run(db_path):
+        # Resume exactly the original message on a delivery retry, not a fresh
+        # analysis whose text/part boundaries might have changed.
+        if send:
+            saved = _saved_report(at.date(), db_path)
+            if saved is not None:
+                _deliver(saved, at.date(), db_path)
+                return "\n\n".join(saved)
         mentions, checked, failed = collect(at.date(), listing)
         if not checked:
             raise RuntimeError("All website discovery feeds failed")
@@ -128,5 +157,6 @@ def run(send: bool = True) -> str:
         if to_log:
             recommendations.record(at, None, to_log)
         TvLog(db_path).replace_day(at.date(), mentions)
+        _save_report(at.date(), db_path, messages)
         _deliver(messages, at.date(), db_path)
         return "\n\n".join(messages)
