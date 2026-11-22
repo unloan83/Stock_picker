@@ -100,6 +100,15 @@ def _deliver(messages: list[str], day: date, db_path: str) -> None:
                 )
 
 
+
+def format_stock_list(day: date, symbols: list[str]) -> str:
+    """Telegram first message: just today's collected NSE symbols."""
+    if not symbols:
+        raise ValueError("Cannot send an empty stock list")
+    return ("📋 Stocks collected · " + day.strftime("%d %b %Y") +
+            "\n" + "\n".join(f"{i}. {symbol}" for i, symbol in enumerate(symbols, 1)))
+
+
 def previous_text(day: date, db_path: str, resolver: SymbolResolver) -> str:
     """On-demand /picks lookup: symbols only, never publisher recommendations."""
     items = shortlist(TvLog(db_path).day(day), resolver.equity_list())
@@ -143,7 +152,7 @@ def run(send: bool = True) -> str:
         if len(reports) != len(symbols):
             raise RuntimeError("Analysis did not return exactly one report per discovered symbol")
         # Use the same formatter and model verdicts as the interactive Telegram bot.
-        messages = format_reply(reports, [], now_ist())
+        messages = [format_stock_list(at.date(), symbols), *format_reply(reports, [], now_ist())]
         if not send:
             return "\n\n".join(messages)
 
